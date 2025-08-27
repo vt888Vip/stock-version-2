@@ -113,6 +113,7 @@ export async function startTradeWorker(): Promise<void> {
           direction,
           amount: Number(amount),
           status: 'pending',
+          appliedToBalance: false, // ✅ THÊM FIELD NÀY
           createdAt: new Date(),
           updatedAt: new Date()
         };

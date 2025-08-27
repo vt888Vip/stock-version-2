@@ -115,9 +115,8 @@ export async function processExpiredSessions(db: any, apiName: string = 'Unknown
 
         // 6. Cập nhật số dư user
         if (isWin) {
-          // ✅ SỬA LỖI: Sử dụng $set thay vì $inc để tránh race condition
-          // 1. Trả lại tiền gốc từ frozen về available
-          // 2. Cộng thêm profit vào available
+          // ✅ SỬA LỖI: Khi thắng, chỉ cộng profit vào available, KHÔNG trừ frozen
+          // Tiền gốc đã được trả từ frozen về available rồi
           
           // Lấy balance hiện tại của user
           const currentUser = await db.collection('users').findOne({ _id: new ObjectId(trade.userId) });
@@ -135,9 +134,9 @@ export async function processExpiredSessions(db: any, apiName: string = 'Unknown
               console.log(`🔄 [${apiName} MIGRATION] User ${currentUser.username}: Chuyển đổi balance từ number sang object`);
             }
 
-            // Tính toán balance mới
+            // ✅ SỬA LỖI: Khi thắng, chỉ cộng profit vào available
             const newAvailableBalance = currentBalance.available + trade.amount + profit;
-            const newFrozenBalance = currentBalance.frozen - trade.amount;
+            // const newFrozenBalance = currentBalance.frozen - trade.amount; // ❌ XOÁ: Không trừ frozen khi thắng!
 
             await db.collection('users').updateOne(
               { _id: new ObjectId(trade.userId) },
@@ -145,14 +144,14 @@ export async function processExpiredSessions(db: any, apiName: string = 'Unknown
                 $set: { 
                   balance: {
                     available: newAvailableBalance,
-                    frozen: newFrozenBalance
+                    frozen: currentBalance.frozen // Giữ nguyên frozen
                   },
                   updatedAt: now
                 }
               }
             );
             
-            console.log(`💰 [${apiName}] User ${currentUser.username} thắng: available ${currentBalance.available} → ${newAvailableBalance} (+${trade.amount + profit}), frozen ${currentBalance.frozen} → ${newFrozenBalance} (-${trade.amount})`);
+            console.log(`💰 [${apiName}] User ${currentUser.username} thắng: available ${currentBalance.available} → ${newAvailableBalance} (+${trade.amount + profit}), frozen giữ nguyên ${currentBalance.frozen}`);
           }
         } else {
           // Thua: chỉ trừ tiền cược (đã bị đóng băng)

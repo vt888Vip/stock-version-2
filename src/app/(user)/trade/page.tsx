@@ -616,13 +616,9 @@ export default function TradePage() {
   const confirmTrade = useCallback(async () => {
     const token = localStorage.getItem('authToken');
     
-    // ✅ THÊM: Kiểm tra và set trạng thái đang đặt lệnh
-    if (isPlacingTrade) {
-      toast({
-        title: 'Đang xử lý',
-        description: 'Vui lòng đợi lệnh trước hoàn thành',
-        variant: 'destructive',
-      });
+    // ✅ THÊM: Kiểm tra và ngăn multiple calls
+    if (isPlacingTrade || isSubmitting) {
+      console.log('🔄 [RACE PREVENTION] Đang xử lý lệnh trước, bỏ qua request này');
       return;
     }
     
@@ -670,9 +666,12 @@ export default function TradePage() {
       return;
     }
 
+    // ✅ SET: Trạng thái đang đặt lệnh ngay từ đầu
     setIsSubmitting(true);
     setIsConfirming(false);
-    setIsPlacingTrade(true); // ✅ SET: Trạng thái đang đặt lệnh
+    setIsPlacingTrade(true);
+
+    console.log('🚀 [TRADE REQUEST] Bắt đầu đặt lệnh:', { selectedAction, amount, currentSessionId });
 
     try {
       // Debug log request body
@@ -780,7 +779,7 @@ export default function TradePage() {
       setIsSubmitting(false);
       setIsPlacingTrade(false); // ✅ RESET: Trạng thái đặt lệnh
     }
-  }, [selectedAction, amount, currentSessionId, toast, isBalanceLocked]);
+  }, [selectedAction, amount, currentSessionId, toast, isBalanceLocked, isPlacingTrade, isSubmitting]);
 
   // Loading state
   if (isLoading || authLoading) {
@@ -839,6 +838,7 @@ export default function TradePage() {
                 type="button"
                 className={`flex-1 ${selectedAction === "UP" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}
                 onClick={confirmTrade}
+                disabled={isSubmitting}
               >
                 Xác nhận
               </Button>

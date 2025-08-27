@@ -8,6 +8,7 @@ export interface ITrade extends Document {
   status: 'pending' | 'completed';
   result?: 'win' | 'lose';
   profit?: number;
+  appliedToBalance?: boolean;
   completedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -49,6 +50,11 @@ const tradeSchema = new Schema<ITrade>({
     type: Number, 
     default: 0 
   },
+  appliedToBalance: { 
+    type: Boolean, 
+    default: false,
+    index: true 
+  },
   completedAt: { 
     type: Date 
   },
@@ -69,5 +75,6 @@ tradeSchema.index({ sessionId: 1, userId: 1 });
 tradeSchema.index({ status: 1 });
 tradeSchema.index({ createdAt: -1 });
 tradeSchema.index({ userId: 1, createdAt: -1 });
+tradeSchema.index({ sessionId: 1, appliedToBalance: 1, status: 1 });
 
 export default mongoose.models.Trade || mongoose.model<ITrade>('Trade', tradeSchema);

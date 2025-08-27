@@ -106,6 +106,7 @@ export async function POST(req: Request) {
         direction,
         amount: Number(amount),
         status: 'pending',
+        appliedToBalance: false, // ✅ THÊM FIELD NÀY
         createdAt: new Date(),
         updatedAt: new Date()
       };
@@ -128,6 +129,20 @@ export async function POST(req: Request) {
       }
 
       console.log(`✅ [PLACE TRADE] User ${user.userId} đặt lệnh ${direction} - ${amount} VND cho session ${sessionId}`);
+
+      // ✅ THÊM: Log balance để debug
+      console.log(`💰 [BALANCE DEBUG] User ${user.userId}:`, {
+        balanceBefore: {
+          available: balanceBefore.available || 0,
+          frozen: balanceBefore.frozen || 0
+        },
+        balanceAfter: {
+          available: (balanceBefore.available || 0) - amount,
+          frozen: (balanceBefore.frozen || 0) + amount
+        },
+        amount,
+        direction
+      });
 
       // Lấy lại lệnh vừa tạo để trả về
       const insertedTrade = await db.collection('trades').findOne({

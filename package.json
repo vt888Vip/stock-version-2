@@ -17,7 +17,8 @@
     "cron": "node scripts/setup-cron.js",
     "test-cron": "node scripts/test-cron.cjs",
     "test-performance": "node scripts/test-performance.js",
-    "test-balance": "node scripts/test-balance.js"
+    "test-balance": "node scripts/test-balance.js",
+    "migrate-applied-to-balance": "node scripts/migrate-applied-to-balance.cjs"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "latest",
