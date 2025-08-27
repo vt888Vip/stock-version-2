@@ -3,7 +3,6 @@
 import React from 'react';
 import { AuthProvider } from '@/lib/useAuth';
 import { Toaster } from '@/components/ui/toaster';
-import { initializeFutureSessionsManager } from '@/lib/futureSessionsManager';
 
 // Đảm bảo React được khai báo trong phạm vi toàn cục
 declare global {
@@ -27,10 +26,22 @@ export default function ClientLayout({
     }
   }, []);
 
-  // Khởi động FutureSessionsManager
+  // ✅ Khởi động background services thông qua API
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
-      initializeFutureSessionsManager();
+      // Gọi API để khởi động services ở server-side
+      fetch('/api/init-services')
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            console.log('✅ Background services initialized successfully');
+          } else {
+            console.error('❌ Failed to initialize background services:', data.message);
+          }
+        })
+        .catch(error => {
+          console.error('❌ Error initializing background services:', error);
+        });
     }
   }, []);
 

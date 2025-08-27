@@ -18,7 +18,17 @@
     "test-cron": "node scripts/test-cron.cjs",
     "test-performance": "node scripts/test-performance.js",
     "test-balance": "node scripts/test-balance.js",
-    "migrate-applied-to-balance": "node scripts/migrate-applied-to-balance.cjs"
+    "migrate-applied-to-balance": "node scripts/migrate-applied-to-balance.cjs",
+    "fix-negative-balance": "node scripts/fix-negative-balance.cjs",
+    "test-check-results-api": "node scripts/test-check-results.cjs",
+    "monitor-logs": "node scripts/monitor-logs.cjs",
+    "test-full-flow": "node scripts/test-full-flow.cjs",
+    "debug-session": "node scripts/debug-session.cjs",
+    "list-sessions": "node scripts/list-sessions.cjs",
+    "check-db": "node scripts/check-db.cjs",
+    "fix-applied-to-balance": "node scripts/fix-applied-to-balance.cjs",
+    "check-processing-complete": "node scripts/check-processing-complete.cjs",
+    "fix-processing-complete": "node scripts/fix-processing-complete.cjs"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "latest",

@@ -7,6 +7,7 @@ export interface ITradingSession extends Document {
   endTime: Date;
   status: 'ACTIVE' | 'COMPLETED';
   result: 'UP' | 'DOWN'; // Kết quả được tạo sẵn khi tạo phiên
+  processingComplete?: boolean; // ✅ Thêm field này để đánh dấu đã xử lý trades chưa
   totalTrades: number;
   totalWins: number;
   totalLosses: number;
@@ -46,6 +47,10 @@ const tradingSessionSchema = new Schema<ITradingSession>({
     enum: ['UP', 'DOWN'],
     required: true // Kết quả được tạo sẵn
   },
+  processingComplete: { 
+    type: Boolean, 
+    default: false // ✅ Mặc định là false khi tạo session mới
+  },
   totalTrades: { 
     type: Number, 
     default: 0 
@@ -84,6 +89,7 @@ const tradingSessionSchema = new Schema<ITradingSession>({
 // Tạo index cho các trường thường xuyên được query
 tradingSessionSchema.index({ sessionId: 1 });
 tradingSessionSchema.index({ status: 1 });
+tradingSessionSchema.index({ processingComplete: 1 }); // ✅ Thêm index cho field mới
 tradingSessionSchema.index({ startTime: 1, endTime: 1 });
 tradingSessionSchema.index({ createdAt: -1 });
 

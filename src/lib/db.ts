@@ -62,7 +62,7 @@ export async function connectToDatabase() {
     console.log(`Kết nối tới MongoDB với URI: ${MONGODB_URI.split('@')[1]?.split('?')[0] || MONGODB_URI}`);
 
     cached.promise = mongoose.connect(MONGODB_URI, opts)
-      .then((mongoose) => {
+      .then(() => {
         console.log('✅ Đã kết nối thành công tới MongoDB Atlas');
         return mongoose;
       })

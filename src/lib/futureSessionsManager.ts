@@ -1,4 +1,5 @@
 import { getMongoDb } from '@/lib/db';
+import TradingSessionModel from '@/models/TradingSession';
 
 /**
  * Background service để tự động duy trì 30 phiên tương lai
@@ -54,12 +55,10 @@ class FutureSessionsManager {
       const now = new Date();
       
       // Kiểm tra số phiên tương lai hiện có
-      const existingFutureSessions = await db.collection('trading_sessions')
-        .find({
-          startTime: { $gt: now },
-          status: 'ACTIVE'
-        })
-        .count();
+      const existingFutureSessions = await TradingSessionModel.countDocuments({
+        startTime: { $gt: now },
+        status: 'ACTIVE'
+      });
 
       console.log(`📊 Hiện có ${existingFutureSessions} phiên tương lai`);
 
@@ -84,13 +83,12 @@ class FutureSessionsManager {
   private async generateFutureSessions(db: any, startTime: Date, count: number) {
     try {
       // Tìm phiên cuối cùng để tính thời gian bắt đầu
-      const lastSession = await db.collection('trading_sessions')
-        .find({
-          startTime: { $gt: startTime }
-        })
+      const lastSession = await TradingSessionModel.find({
+        startTime: { $gt: startTime }
+      })
         .sort({ startTime: -1 })
         .limit(1)
-        .toArray();
+        .lean();
 
       let nextStartTime: Date;
       
@@ -122,37 +120,39 @@ class FutureSessionsManager {
         // Tạo kết quả ngẫu nhiên (50% UP, 50% DOWN)
         const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
         
-        const newSession = {
+        // ✅ SỬ DỤNG MODEL MONGOOSE: Tạo session với validation và default values
+        const newSession = new TradingSessionModel({
           sessionId,
           startTime: sessionStartTime,
           endTime: sessionEndTime,
           status: 'ACTIVE',
           result, // Kết quả được tạo sẵn
+          processingComplete : false, 
           totalTrades: 0,
           totalWins: 0,
           totalLosses: 0,
           totalWinAmount: 0,
-          totalLossAmount: 0,
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
+          totalLossAmount: 0
+          // createdAt và updatedAt sẽ tự động được set
+        });
         
         newSessions.push(newSession);
       }
 
-      // Sử dụng bulkWrite để tạo nhiều phiên cùng lúc
+      // ✅ SỬ DỤNG MODEL MONGOOSE: Bulk insert với validation
       if (newSessions.length > 0) {
+        // Sử dụng insertMany với upsert để tránh trùng lặp
         const bulkOps = newSessions.map(session => ({
           updateOne: {
             filter: { sessionId: session.sessionId },
-            update: { $setOnInsert: session },
+            update: { $setOnInsert: session.toObject() },
             upsert: true
           }
         }));
 
-        await db.collection('trading_sessions').bulkWrite(bulkOps);
+        await TradingSessionModel.bulkWrite(bulkOps);
         
-        console.log(`✅ Đã tạo ${newSessions.length} phiên tương lai`);
+        console.log(`✅ Đã tạo ${newSessions.length} phiên tương lai với Mongoose model`);
       }
     } catch (error) {
       console.error('❌ Lỗi tạo phiên tương lai:', error);
@@ -172,7 +172,7 @@ class FutureSessionsManager {
       const now = new Date();
       
       // Xóa tất cả phiên tương lai cũ
-      await db.collection('trading_sessions').deleteMany({
+      await TradingSessionModel.deleteMany({
         startTime: { $gt: now },
         status: 'ACTIVE'
       });

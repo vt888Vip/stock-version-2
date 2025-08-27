@@ -39,6 +39,7 @@ export async function GET(request: NextRequest) {
           endTime: nextMinute,
           status: 'ACTIVE',
           result, // Kết quả được tạo sẵn
+          processingComplete: false, // ✅ Thêm field này để đánh dấu chưa xử lý
           totalTrades: 0,
           totalWins: 0,
           totalLosses: 0,
