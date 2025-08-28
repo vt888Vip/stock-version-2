@@ -406,79 +406,49 @@ export default function TradePage() {
       // Chờ 12 giây rồi cập nhật (giữ nguyên để tạo kịch tính)
       setTimeout(updateAfterDelay, 12000);
 
-      // ✅ TỐI ƯU: Smart polling cho trade results
-      const pollForResults = async () => {
+      // ✅ CHỈ GỌI 1 LẦN: Check results sau 12 giây
+      const checkResultsOnce = async () => {
         try {
-          // ✅ SỬ DỤNG MONITORING: Wrap API call với performance tracking
-          const resultData = await withPollingMonitor(
-            async () => {
-              const checkResultsResponse = await fetch('/api/trades/check-results', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                },
-                body: JSON.stringify({ sessionId: currentSessionId })
-              });
-
-              if (!checkResultsResponse.ok) {
-                throw new Error('Check results failed');
-              }
-
-              return checkResultsResponse.json();
+          console.log('🔍 Kiểm tra kết quả phiên:', currentSessionId);
+          
+          const checkResultsResponse = await fetch('/api/trades/check-results', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('authToken')}`
             },
-            'check-results'
-          );
+            body: JSON.stringify({ sessionId: currentSessionId })
+          });
 
-          if (resultData.hasResult) {
-            // console.log('✅ Kết quả đã sẵn sàng');
-            return true; // Trả về true để dừng polling
+          if (checkResultsResponse.ok) {
+            const resultData = await checkResultsResponse.json();
+            
+            if (resultData.hasResult && resultData.result) {
+              console.log('✅ Nhận được kết quả có sẵn:', resultData.result);
+              setTradeResult({ 
+                status: resultData.result === 'UP' ? 'win' : 'lose'
+              });
+            } else if (resultData.shouldRetry) {
+              console.log('⏳ Kết quả chưa sẵn sàng, sẽ thử lại sau');
+            } else {
+              console.log('❌ Không thể lấy kết quả:', resultData.message);
+            }
+          } else {
+            console.error('❌ Lỗi khi check results:', checkResultsResponse.status);
           }
         } catch (error) {
-          console.error('Lỗi khi polling kết quả:', error);
+          console.error('❌ Lỗi khi check results:', error);
+          
+          toast({
+            title: '⚠️ Lỗi kết nối',
+            description: 'Không thể kiểm tra kết quả, vui lòng thử lại sau',
+            duration: 3000,
+          });
         }
-        return false; // Trả về false để tiếp tục polling
       };
 
-      // ✅ SMART POLLING: Polling thông minh cho kết quả
-      let pollCount = 0;
-      const pollInterval = setInterval(async () => {
-        pollCount++;
-        const hasResult = await pollForResults();
-        
-        if (hasResult) {
-          // Có kết quả rồi, dừng polling
-          clearInterval(pollInterval);
-          // console.log('✅ Dừng polling kết quả');
-        } else if (pollCount >= 6) { // Giảm từ 12 xuống 6 giây
-          // Hết 6 giây, chuyển sang polling chậm hơn
-          clearInterval(pollInterval);
-          
-          // ✅ TIẾP TỤC POLLING CHẬM: Mỗi 5 giây trong 30 giây tiếp theo
-          let extendedPollCount = 0;
-          const extendedPollInterval = setInterval(async () => {
-            extendedPollCount++;
-            const hasResult = await pollForResults();
-            
-            if (hasResult) {
-              clearInterval(extendedPollInterval);
-              // console.log('✅ Dừng extended polling kết quả');
-            } else if (extendedPollCount >= 6) { // 30 giây (6 * 5s)
-              clearInterval(extendedPollInterval);
-              
-              // Hiển thị thông báo cho người dùng
-              toast({
-                title: '🎲 Kết quả tự động',
-                description: 'Hệ thống sẽ tạo kết quả tự động để đảm bảo hoạt động',
-                duration: 5000,
-              });
-              
-              // Force update để tránh treo
-              await updateAfterDelay();
-            }
-          }, 3000);
-        }
-      }, 1000);
+      // Gọi check results 1 lần duy nhất sau 12 giây
+      setTimeout(checkResultsOnce, 12000);
 
       // Trigger session update by calling the API again
       const forceUpdateSession = async () => {
@@ -538,6 +508,8 @@ export default function TradePage() {
 
     return () => clearInterval(timer);
   }, [updateCountdown]);
+
+
 
   // Cập nhật ngày và giờ chỉ ở client
   useEffect(() => {
@@ -766,15 +738,10 @@ export default function TradePage() {
           balanceAfter: data.balanceAfter
         });
 
-        // ✅ CẬP NHẬT BALANCE NGAY: Sử dụng thông tin từ API response
+        // ✅ CẬP NHẬT BALANCE NGAY
         if (data.balanceAfter) {
           setBalance(data.balanceAfter.available);
           setFrozenBalance(data.balanceAfter.frozen);
-          console.log('💰 Cập nhật balance ngay:', {
-            before: data.balanceBefore,
-            after: data.balanceAfter,
-            change: data.balanceBefore.available - data.balanceAfter.available
-          });
         }
       }
     } catch (error) {
@@ -870,7 +837,7 @@ export default function TradePage() {
                   </div>
                 </CardHeader>
                                  <CardContent>
-                   {/* Hiển thị số dư */}
+                                       {/* Hiển thị số dư */}
                                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                       <div className="flex items-center justify-between text-blue-900">
                         <span className="font-semibold">SỐ DƯ:</span>

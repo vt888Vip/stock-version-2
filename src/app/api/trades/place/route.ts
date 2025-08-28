@@ -166,10 +166,7 @@ export async function POST(req: Request) {
     // 4. Cập nhật balance trước (atomic operation) - đảm bảo frozen không âm
     console.log(`💰 [${requestId}] Cập nhật balance (atomic)`);
     
-    // Tính toán frozen mới, đảm bảo không âm
-    const currentFrozen = balanceBefore.frozen || 0;
-    const newFrozen = Math.max(0, currentFrozen + amount); // Đảm bảo không âm
-    
+    // ✅ ĐÚNG: Cập nhật balance - available giảm, frozen tăng
     const balanceUpdateResult = await db.collection('users').updateOne(
       { 
         _id: new ObjectId(user.userId),
@@ -177,10 +174,8 @@ export async function POST(req: Request) {
       },
       {
         $inc: {
-          'balance.available': -amount
-        },
-        $set: {
-          'balance.frozen': newFrozen
+          'balance.available': -amount,
+          'balance.frozen': amount
         }
       }
     );

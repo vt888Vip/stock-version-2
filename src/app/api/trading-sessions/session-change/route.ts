@@ -11,7 +11,6 @@ const SETTLEMENTS_QUEUE = 'settlements';
 // Hàm gửi settlement message vào queue
 async function sendSettlementMessage(settlementData: {
   sessionId: string;
-  result: 'UP' | 'DOWN';
   id: string;
   timestamp: string;
 }): Promise<boolean> {
@@ -79,7 +78,6 @@ export async function GET(request: NextRequest) {
         
         const settlementData = {
           sessionId: currentSession.sessionId,
-          result: currentSession.result, // Kết quả đã được định sẵn
           id: `settlement_${currentSession.sessionId}_${Date.now()}`,
           timestamp: new Date().toISOString()
         };

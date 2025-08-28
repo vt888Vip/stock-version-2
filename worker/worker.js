@@ -140,24 +140,43 @@ async function processSettlement(settlementData) {
     console.log(`🔄 [SETTLEMENT] Bắt đầu xử lý settlement: ${settlementData.id}`);
     
     const result = await session.withTransaction(async () => {
-      const { sessionId, result: sessionResult } = settlementData;
+      const { sessionId } = settlementData;
 
-      // 1. Cập nhật session status
-      const sessionUpdateResult = await TradingSession.updateOne(
+      // 1. Lấy kết quả có sẵn từ session
+      const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
+        { sessionId },
+        { result: 1 }
+      );
+      
+      if (!sessionDoc || !sessionDoc.result) {
+        throw new Error('Session not found or no result available');
+      }
+      
+      const sessionResult = sessionDoc.result;
+      console.log(`📊 [SETTLEMENT] Sử dụng kết quả có sẵn: ${sessionResult} cho session ${sessionId}`);
+
+      // 2. Cập nhật session status
+      const sessionUpdateResult = await mongoose.connection.db.collection('trading_sessions').updateOne(
         { sessionId },
         {
-          status: 'COMPLETED',
-          actualResult: sessionResult,
-          processingComplete: true
+          $set: {
+            status: 'COMPLETED',
+            actualResult: sessionResult,
+            processingComplete: true,
+            updatedAt: new Date()
+          }
         }
-      ).session(session);
+      );
 
       if (sessionUpdateResult.modifiedCount === 0) {
         throw new Error('Session not found or already completed');
       }
 
-      // 2. Lấy tất cả trades pending trong session
-      const pendingTrades = await Trade.find({ sessionId, status: 'pending' }).session(session);
+      // 2. Lấy tất cả trades pending trong session (sử dụng cùng collection với API)
+      const pendingTrades = await mongoose.connection.db.collection('trades').find({ 
+        sessionId, 
+        status: 'pending' 
+      }).toArray();
 
       console.log(`📊 [SETTLEMENT] Tìm thấy ${pendingTrades.length} trades cần xử lý`);
 
@@ -172,27 +191,49 @@ async function processSettlement(settlementData) {
          // ✅ TỶ LỆ 10 ĂN 9: Đặt 10 thắng 9, đặt 100 thắng 90
          const profit = isWin ? Math.floor(trade.amount * 0.9) : 0;
 
-        // Cập nhật trade
-        await Trade.updateOne(
+        // Cập nhật trade (sử dụng cùng collection với API)
+        await mongoose.connection.db.collection('trades').updateOne(
           { _id: trade._id },
           {
-            status: 'completed',
-            result: isWin ? 'win' : 'lose',
-            profit: profit,
-            appliedToBalance: true
+            $set: {
+              status: 'completed',
+              result: isWin ? 'win' : 'lose',
+              profit: profit,
+              appliedToBalance: true,
+              updatedAt: new Date()
+            }
           }
-        ).session(session);
+        );
 
-                 // Cập nhật balance
-         await User.updateOne(
-           { _id: trade.userId },
-           {
-             $inc: {
-               'balance.frozen': -trade.amount,
-               'balance.available': isWin ? trade.amount + profit : 0
+                 // ✅ ĐÚNG: Cập nhật balance khi xử lý settlement
+         if (isWin) {
+           // THẮNG: Trả lại tiền gốc + tiền thắng
+           await mongoose.connection.db.collection('users').updateOne(
+             { _id: trade.userId },
+             {
+               $inc: {
+                 'balance.frozen': -trade.amount,
+                 'balance.available': trade.amount + profit
+               },
+               $set: {
+                 updatedAt: new Date()
+               }
              }
-           }
-         ).session(session);
+           );
+         } else {
+           // THUA: Chỉ trừ frozen (mất tiền)
+           await mongoose.connection.db.collection('users').updateOne(
+             { _id: trade.userId },
+             {
+               $inc: {
+                 'balance.frozen': -trade.amount
+               },
+               $set: {
+                 updatedAt: new Date()
+               }
+             }
+           );
+         }
 
         // Cập nhật thống kê
         if (isWin) {
@@ -206,19 +247,22 @@ async function processSettlement(settlementData) {
         console.log(`✅ [SETTLEMENT] Xử lý trade ${trade._id}: ${isWin ? 'WIN' : 'LOSE'} ${trade.amount}`);
       }
 
-      // 4. Cập nhật session statistics và đánh dấu hoàn thành
-      await TradingSession.updateOne(
+      // 4. Cập nhật session statistics và đánh dấu hoàn thành (sử dụng cùng collection với API)
+      await mongoose.connection.db.collection('trading_sessions').updateOne(
         { sessionId },
         {
-          totalTrades: pendingTrades.length,
-          totalWins: totalWins,
-          totalLosses: totalLosses,
-          totalWinAmount: totalWinAmount,
-          totalLossAmount: totalLossAmount,
-          processingComplete: true,
-          processingCompletedAt: new Date()
+          $set: {
+            totalTrades: pendingTrades.length,
+            totalWins: totalWins,
+            totalLosses: totalLosses,
+            totalWinAmount: totalWinAmount,
+            totalLossAmount: totalLossAmount,
+            processingComplete: true,
+            processingCompletedAt: new Date(),
+            updatedAt: new Date()
+          }
         }
-      ).session(session);
+      );
 
       console.log(`✅ [SETTLEMENT] Xử lý settlement thành công: ${settlementData.id}`);
       console.log(`📊 [SETTLEMENT] Thống kê: ${pendingTrades.length} trades, ${totalWins} wins, ${totalLosses} losses`);
