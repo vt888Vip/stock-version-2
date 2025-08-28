@@ -74,6 +74,8 @@ export async function GET(request: NextRequest) {
       console.log('⏰ Phiên đã kết thúc, gửi settlement message:', currentSession.sessionId);
       
       try {
+        console.log(`🔍 [SESSION-CHANGE] Session ${currentSession.sessionId} có kết quả: ${currentSession.result}`);
+        
         const settlementData = {
           sessionId: currentSession.sessionId,
           result: currentSession.result, // Kết quả đã được định sẵn

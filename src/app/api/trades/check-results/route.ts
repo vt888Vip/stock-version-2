@@ -225,6 +225,8 @@ export async function POST(req: Request) {
         // ✅ CHUYỂN SANG QUEUE: Gửi settlement message vào queue thay vì xử lý trực tiếp
         console.log(`📤 [QUEUE] Gửi settlement message cho session ${sessionId}`);
         
+        console.log(`🔍 [CHECK-RESULTS] Session ${sessionId} có kết quả: ${tradingSession.result}`);
+        
         const settlementData = {
           sessionId: sessionId,
           result: tradingSession.result as 'UP' | 'DOWN',
