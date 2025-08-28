@@ -7,15 +7,19 @@ export interface ITradingSession extends Document {
   endTime: Date;
   status: 'ACTIVE' | 'COMPLETED';
   result: 'UP' | 'DOWN'; // Kết quả được tạo sẵn khi tạo phiên
+  actualResult?: 'UP' | 'DOWN'; // Kết quả thực tế
   processingComplete?: boolean; // ✅ Thêm field này để đánh dấu đã xử lý trades chưa
+  processingStarted?: boolean; // Đánh dấu đã bắt đầu xử lý
+  processingStartedAt?: Date; // Thời gian bắt đầu xử lý
+  createdBy?: string; // Ai tạo kết quả (system_random, etc.)
+  settlementQueued?: boolean; // Đánh dấu đã gửi vào queue chưa
+  settlementQueuedAt?: Date; // Thời gian gửi vào queue
   totalTrades: number;
   totalWins: number;
   totalLosses: number;
   totalWinAmount: number;
   totalLossAmount: number;
   completedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
 }
 
 // Định nghĩa schema cho TradingSession
@@ -47,9 +51,30 @@ const tradingSessionSchema = new Schema<ITradingSession>({
     enum: ['UP', 'DOWN'],
     required: true // Kết quả được tạo sẵn
   },
+  actualResult: { 
+    type: String, 
+    enum: ['UP', 'DOWN']
+  },
   processingComplete: { 
     type: Boolean, 
     default: false // ✅ Mặc định là false khi tạo session mới
+  },
+  processingStarted: { 
+    type: Boolean, 
+    default: false
+  },
+  processingStartedAt: { 
+    type: Date 
+  },
+  createdBy: { 
+    type: String 
+  },
+  settlementQueued: { 
+    type: Boolean, 
+    default: false 
+  },
+  settlementQueuedAt: { 
+    type: Date 
   },
   totalTrades: { 
     type: Number, 
@@ -73,14 +98,6 @@ const tradingSessionSchema = new Schema<ITradingSession>({
   },
   completedAt: { 
     type: Date 
-  },
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
-  },
-  updatedAt: { 
-    type: Date, 
-    default: Date.now 
   }
 }, {
   timestamps: true,

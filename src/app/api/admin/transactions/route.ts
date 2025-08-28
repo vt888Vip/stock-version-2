@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import clientPromise from '@/lib/mongodb';
+import { connectToDatabase } from '@/lib/db';
+import User from '@/models/User';
 
 export async function GET(request: NextRequest) {
   try {
-    const client = await clientPromise;
-    const db = client.db();
+    await connectToDatabase();
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -13,17 +13,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Lấy lịch sử giao dịch (deposits và withdrawals)
-    const deposits = await db.collection('deposits')
-      .find({}, { projection: { password: 0 } })
+    const deposits = await User.find({}, { password: 0 })
       .sort({ createdAt: -1 })
       .limit(50)
-      .toArray();
+      .lean();
 
-    const withdrawals = await db.collection('withdrawals')
-      .find({}, { projection: { password: 0 } })
+    const withdrawals = await User.find({}, { password: 0 })
       .sort({ createdAt: -1 })
       .limit(50)
-      .toArray();
+      .lean();
 
     // Kết hợp và format dữ liệu
     const transactions = [

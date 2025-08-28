@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/auth';
-import { ObjectId } from 'mongodb';
-import clientPromise from '@/lib/mongodb';
+import { connectToDatabase } from '@/lib/db';
+import User from '@/models/User';
 
 interface UserDocument {
-  _id: ObjectId;
+  _id: string;
   username: string;
   fullName?: string;
   verification?: {
@@ -29,11 +29,10 @@ export async function GET(req: NextRequest) {
     }
 
     // Kết nối database
-    const client = await clientPromise;
-    const db = client.db();
+    await connectToDatabase();
     
     // Lấy danh sách người dùng đã upload đủ 2 ảnh nhưng chưa được xác minh
-    const requests: UserDocument[] = await db.collection('users').aggregate([
+    const requests: UserDocument[] = await User.aggregate([
       {
         $match: {
           'verification.cccdFront': { $exists: true, $ne: '' },
@@ -52,7 +51,7 @@ export async function GET(req: NextRequest) {
         }
       },
       { $sort: { updatedAt: -1 } }
-    ]).toArray();
+    ]);
 
     return NextResponse.json({
       success: true,
@@ -100,21 +99,13 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    if (!ObjectId.isValid(userId)) {
-      return NextResponse.json({
-        success: false,
-        message: 'ID người dùng không hợp lệ'
-      }, { status: 400 });
-    }
-
     // Kết nối database
-    const client = await clientPromise;
-    const db = client.db();
+    await connectToDatabase();
     
     // Cập nhật trạng thái xác minh
-    const result = await db.collection('users').updateOne(
+    const result = await User.updateOne(
       { 
-        _id: new ObjectId(userId),
+        _id: userId,
         'verification.cccdFront': { $exists: true, $ne: '' },
         'verification.cccdBack': { $exists: true, $ne: '' }
       },

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import clientPromise from '@/lib/mongodb';
+import { connectToDatabase } from '@/lib/db';
+import User from '@/models/User';
 
 export async function POST(request: NextRequest) {
   try {
-    const client = await clientPromise;
-    const db = client.db();
+    await connectToDatabase();
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Tìm user
-    const user = await db.collection('users').findOne({ _id: userId });
+    const user = await User.findById(userId);
     if (!user) {
       return NextResponse.json(
         { error: 'User not found' },
@@ -34,17 +34,14 @@ export async function POST(request: NextRequest) {
 
     // Cập nhật số dư user
     const newBalance = (user.balance?.available || 0) + amount;
-    await db.collection('users').updateOne(
-      { _id: userId },
+    await User.findByIdAndUpdate(
+      userId,
       { 
-        $set: { 
-          'balance.available': newBalance,
-          updatedAt: new Date()
-        } 
+        'balance.available': newBalance
       }
     );
 
-    // Tạo record giao dịch
+    // Tạo record giao dịch (có thể lưu vào User model hoặc tạo model riêng)
     const transaction = {
       userId,
       username: user.username,
@@ -55,7 +52,13 @@ export async function POST(request: NextRequest) {
       createdAt: new Date()
     };
 
-    await db.collection('deposits').insertOne(transaction);
+    // Lưu transaction vào user
+    await User.findByIdAndUpdate(
+      userId,
+      { 
+        $push: { transactions: transaction }
+      }
+    );
 
     return NextResponse.json({
       success: true,

@@ -141,18 +141,22 @@ class FutureSessionsManager {
 
       // ✅ SỬ DỤNG MODEL MONGOOSE: Bulk insert với validation
       if (newSessions.length > 0) {
-        // Sử dụng insertMany với upsert để tránh trùng lặp
-        const bulkOps = newSessions.map(session => ({
-          updateOne: {
-            filter: { sessionId: session.sessionId },
-            update: { $setOnInsert: session.toObject() },
-            upsert: true
+        try {
+          // Sử dụng insertMany với ordered: false để tiếp tục ngay cả khi có lỗi
+          await TradingSessionModel.insertMany(newSessions, { 
+            ordered: false,
+            rawResult: false 
+          });
+          
+          console.log(`✅ Đã tạo ${newSessions.length} phiên tương lai với Mongoose model`);
+        } catch (insertError: any) {
+          // Nếu có lỗi duplicate key, đó là bình thường - có thể session đã tồn tại
+          if (insertError.code === 11000) {
+            console.log(`⚠️ Một số phiên đã tồn tại, bỏ qua lỗi duplicate key`);
+          } else {
+            throw insertError;
           }
-        }));
-
-        await TradingSessionModel.bulkWrite(bulkOps);
-        
-        console.log(`✅ Đã tạo ${newSessions.length} phiên tương lai với Mongoose model`);
+        }
       }
     } catch (error) {
       console.error('❌ Lỗi tạo phiên tương lai:', error);

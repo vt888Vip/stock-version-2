@@ -745,7 +745,7 @@ export default function TradePage() {
         setSelectedAction(null);
 
         // Cập nhật số lệnh trong phiên hiện tại
-        const tradesInSession = data.data?.tradesInSession || 1;
+        const tradesInSession = data.tradesInSession || 1;
         setTradesInCurrentSession(tradesInSession);
         
         // Hiển thị thông tin về số lệnh đã đặt trong phiên
@@ -754,7 +754,16 @@ export default function TradePage() {
         toast({
           title: '✅ Đặt lệnh thành công!',
           description: `Lệnh ${selectedAction === 'UP' ? 'LÊN' : 'XUỐNG'} - ${formatCurrency(Number(amount))} - Đang đợi kết quả${sessionInfo}`,
-          duration: 2500, // Tự động đóng sau 2.5 giây
+          duration: 5000, // Tăng thời gian hiển thị lên 5 giây
+        });
+
+        console.log('🎉 Đặt lệnh thành công:', {
+          tradeId: data.trade._id,
+          sessionId: currentSessionId,
+          direction: selectedAction,
+          amount: Number(amount),
+          tradesInSession: tradesInSession,
+          balanceAfter: data.balanceAfter
         });
 
         // ✅ CẬP NHẬT BALANCE NGAY: Sử dụng thông tin từ API response

@@ -1,6 +1,48 @@
 import { NextResponse } from 'next/server';
 import { getMongoDb } from '@/lib/db';
 import { NextRequest } from 'next/server';
+import amqp from 'amqplib';
+
+// RabbitMQ Configuration
+const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqps://seecjpys:zQCC056kIx1vnMmrImQqAAVbVUUfmk0M@fuji.lmq.cloudamqp.com/seecjpys';
+const SETTLEMENTS_QUEUE = 'settlements';
+
+// Hàm gửi settlement message vào queue
+async function sendSettlementMessage(settlementData: {
+  sessionId: string;
+  result: 'UP' | 'DOWN';
+  id: string;
+  timestamp: string;
+}): Promise<boolean> {
+  try {
+    const connection = await amqp.connect(RABBITMQ_URL);
+    const channel = await connection.createChannel();
+    
+    // Đảm bảo queue tồn tại
+    await channel.assertQueue(SETTLEMENTS_QUEUE, {
+      durable: true,
+      maxPriority: 10
+    });
+    
+    // Gửi message
+    const success = channel.sendToQueue(
+      SETTLEMENTS_QUEUE,
+      Buffer.from(JSON.stringify(settlementData)),
+      {
+        persistent: true,
+        priority: 1
+      }
+    );
+    
+    await channel.close();
+    await connection.close();
+    
+    return success;
+  } catch (error) {
+    console.error('❌ Lỗi gửi settlement message:', error);
+    return false;
+  }
+}
 
 // API để theo dõi sự thay đổi phiên và tạo phiên mới với kết quả có sẵn
 export async function GET(request: NextRequest) {
@@ -26,6 +68,31 @@ export async function GET(request: NextRequest) {
     // Kiểm tra xem phiên hiện tại có kết thúc chưa
     const sessionEnded = currentSession && currentSession.endTime <= now;
     const sessionChanged = sessionEnded || !currentSession;
+
+    // Nếu phiên đã kết thúc và chưa được xử lý, gửi settlement message
+    if (sessionEnded && currentSession && currentSession.status === 'ACTIVE') {
+      console.log('⏰ Phiên đã kết thúc, gửi settlement message:', currentSession.sessionId);
+      
+      try {
+        const settlementData = {
+          sessionId: currentSession.sessionId,
+          result: currentSession.result, // Kết quả đã được định sẵn
+          id: `settlement_${currentSession.sessionId}_${Date.now()}`,
+          timestamp: new Date().toISOString()
+        };
+
+        // Gửi vào queue settlements
+        const queueResult = await sendSettlementMessage(settlementData);
+        
+        if (queueResult) {
+          console.log('✅ Đã gửi settlement vào queue:', currentSession.sessionId);
+        } else {
+          console.log('❌ Không thể gửi settlement vào queue');
+        }
+      } catch (error) {
+        console.error('❌ Lỗi khi gửi settlement vào queue:', error);
+      }
+    }
 
     if (sessionChanged) {
       // Tạo phiên mới nếu cần

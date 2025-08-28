@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/auth';
-import { ObjectId } from 'mongodb';
-import clientPromise from '@/lib/mongodb';
+import { connectToDatabase } from '@/lib/db';
+import User from '@/models/User';
 import cloudinary from '@/lib/cloudinary';
 
 // Maximum file size: 5MB
@@ -74,30 +74,26 @@ export async function POST(req: NextRequest) {
     const fileUrl = (uploadResult as any).secure_url;
 
     // Update user document in MongoDB
-    const client = await clientPromise;
-    const db = client.db();
+    await connectToDatabase();
     const updateField = type === 'front' ? 'verification.cccdFront' : 'verification.cccdBack';
-    await db.collection('users').updateOne(
-      { _id: new ObjectId(user.userId) },
+    await User.findByIdAndUpdate(
+      user.userId,
       {
         $set: {
           [updateField]: fileUrl,
           'verification.verified': false,
           'verification.status': 'pending',
           'verification.submittedAt': new Date(),
-        },
-        $setOnInsert: {
-          createdAt: new Date(),
-        },
+        }
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
     // Kiểm tra nếu đã đủ 2 ảnh thì tự động xác minh
-    const updatedUser = await db.collection('users').findOne({ _id: new ObjectId(user.userId) });
+    const updatedUser = await User.findById(user.userId);
     if (updatedUser?.verification?.cccdFront && updatedUser?.verification?.cccdBack) {
-      await db.collection('users').updateOne(
-        { _id: new ObjectId(user.userId) },
+      await User.findByIdAndUpdate(
+        user.userId,
         {
           $set: {
             'verification.verified': true,

@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Eye, EyeOff } from 'lucide-react';
 
-import '@/lib/ensure-react';
+
 
 export default function LoginPage() {
   const [username, setUsername] = useState("");

@@ -15,7 +15,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Loader2, Eye, EyeOff, CheckCircle } from 'lucide-react';
 
 // Import the React global initializer
-import '@/lib/ensure-react';
+
 
 // Hàm kiểm tra tên tài khoản có hợp lệ không (không dấu, không khoảng trắng)
 const validateUsername = (username: string): { isValid: boolean; message: string } => {

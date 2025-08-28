@@ -3,6 +3,10 @@ import { getMongoDb } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 import { ObjectId } from 'mongodb';
 
+// Đã bỏ RabbitMQ - không cần worker cho orders
+
+// Đã bỏ hàm sendTradeOrder - không cần worker cho orders nữa
+
 export async function POST(req: Request) {
   const requestId = `place_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   
@@ -159,36 +163,36 @@ export async function POST(req: Request) {
 
     console.log(`✅ [${requestId}] Balance validation thành công`);
 
-    // 4. Trừ balance với atomic operation
-    console.log(`💳 [${requestId}] Bắt đầu cập nhật balance (atomic operation)`);
+    // 4. Cập nhật balance trước (atomic operation) - đảm bảo frozen không âm
+    console.log(`💰 [${requestId}] Cập nhật balance (atomic)`);
+    
+    // Tính toán frozen mới, đảm bảo không âm
+    const currentFrozen = balanceBefore.frozen || 0;
+    const newFrozen = Math.max(0, currentFrozen + amount); // Đảm bảo không âm
+    
     const balanceUpdateResult = await db.collection('users').updateOne(
       { 
         _id: new ObjectId(user.userId),
-        'balance.available': { $gte: amount }  // Điều kiện atomic
+        'balance.available': { $gte: amount }
       },
       {
         $inc: {
-          'balance.available': -amount,
-          'balance.frozen': amount
+          'balance.available': -amount
         },
-        $set: { updatedAt: new Date() }
+        $set: {
+          'balance.frozen': newFrozen
+        }
       }
     );
-
-    console.log(`💳 [${requestId}] Kết quả cập nhật balance:`, {
-      matchedCount: balanceUpdateResult.matchedCount,
-      modifiedCount: balanceUpdateResult.modifiedCount,
-      upsertedCount: balanceUpdateResult.upsertedCount
-    });
-
+    
     if (balanceUpdateResult.modifiedCount === 0) {
-      console.log(`❌ [${requestId}] Cập nhật balance thất bại - có thể balance đã bị thay đổi`);
-      return NextResponse.json({ message: 'Insufficient balance or user not found' }, { status: 400 });
+      console.log(`❌ [${requestId}] Cập nhật balance thất bại - có thể balance không đủ hoặc đã bị thay đổi`);
+      return NextResponse.json({ message: 'Balance update failed' }, { status: 400 });
     }
-
+    
     console.log(`✅ [${requestId}] Cập nhật balance thành công`);
 
-    // 5. Tạo lệnh giao dịch
+    // 5. Tạo trade record
     console.log(`📝 [${requestId}] Tạo trade record`);
     const trade = {
       sessionId,
@@ -196,54 +200,48 @@ export async function POST(req: Request) {
       direction,
       amount: Number(amount),
       status: 'pending',
-      appliedToBalance: false,
+      appliedToBalance: true, // Đã áp dụng balance
       createdAt: new Date(),
       updatedAt: new Date()
     };
 
-    console.log(`📝 [${requestId}] Trade data:`, {
-      sessionId: trade.sessionId,
-      userId: trade.userId.toString(),
-      direction: trade.direction,
-      amount: trade.amount,
-      status: trade.status
-    });
-
     const tradeResult = await db.collection('trades').insertOne(trade);
     
-    console.log(`📝 [${requestId}] Kết quả tạo trade:`, {
-      insertedId: tradeResult.insertedId?.toString(),
-      acknowledged: tradeResult.acknowledged
-    });
-    
     if (!tradeResult.insertedId) {
-      console.log(`❌ [${requestId}] Tạo trade thất bại, bắt đầu rollback balance`);
-      // Nếu tạo trade thất bại, hoàn lại balance
-      const rollbackResult = await db.collection('users').updateOne(
-        { _id: new ObjectId(user.userId) },
-        {
-          $inc: {
-            'balance.available': amount,
-            'balance.frozen': -amount
-          },
-          $set: { updatedAt: new Date() }
-        }
-      );
-      
-      console.log(`🔄 [${requestId}] Rollback balance kết quả:`, {
-        matchedCount: rollbackResult.matchedCount,
-        modifiedCount: rollbackResult.modifiedCount
-      });
-      
+      console.log(`❌ [${requestId}] Tạo trade thất bại`);
       return NextResponse.json({ message: 'Failed to create trade' }, { status: 500 });
     }
 
-    console.log(`✅ [${requestId}] Tạo trade thành công`);
+    console.log(`✅ [${requestId}] Tạo trade thành công: ${tradeResult.insertedId}`);
 
-    console.log(`✅ [${requestId}] Đặt lệnh thành công: User ${user.userId} - ${direction} ${amount} VND - Session ${sessionId}`);
+    // 5. Gửi lệnh vào RabbitMQ queue (ĐÃ BỎ - không cần worker cho orders)
+    console.log(`✅ [${requestId}] Đã bỏ queue cho orders - xử lý trực tiếp`);
 
-    // Lấy lại lệnh vừa tạo để trả về
-    console.log(`🔍 [${requestId}] Lấy trade vừa tạo để trả về`);
+    // 6. Lấy balance thực tế sau khi cập nhật
+    console.log(`💰 [${requestId}] Lấy balance thực tế sau khi cập nhật`);
+    const userAfter = await db.collection('users').findOne(
+      { _id: new ObjectId(user.userId) },
+      { projection: { balance: 1 } }
+    );
+    
+    const balanceAfter = userAfter?.balance || { available: 0, frozen: 0 };
+    
+    console.log(`💰 [${requestId}] Balance thực tế sau khi cập nhật:`, balanceAfter);
+
+    console.log(`🎉 [${requestId}] ĐẶT LỆNH THÀNH CÔNG! (Xử lý trực tiếp)`);
+    console.log(`📊 [${requestId}] Chi tiết lệnh:`, {
+      userId: user.userId,
+      sessionId: sessionId,
+      direction: direction,
+      amount: amount,
+      timestamp: new Date().toISOString(),
+      balanceBefore: balanceBefore,
+      balanceAfter: balanceAfter,
+      tradesInSession: userTradesInSession + 1,
+      status: 'completed'
+    });
+
+    // Lấy lại trade vừa tạo để trả về
     const insertedTrade = await db.collection('trades').findOne({
       _id: tradeResult.insertedId
     });
@@ -252,22 +250,6 @@ export async function POST(req: Request) {
       console.log(`❌ [${requestId}] Không tìm thấy trade vừa tạo: ${tradeResult.insertedId}`);
       return NextResponse.json({ message: 'Inserted trade not found' }, { status: 500 });
     }
-
-    const balanceAfter = {
-      available: (balanceBefore.available || 0) - amount,
-      frozen: (balanceBefore.frozen || 0) + amount
-    };
-
-    console.log(`💰 [${requestId}] Balance sau khi đặt lệnh:`, {
-      before: balanceBefore,
-      after: balanceAfter,
-      change: {
-        available: -amount,
-        frozen: amount
-      }
-    });
-
-    console.log(`🎉 [${requestId}] Hoàn thành đặt lệnh thành công`);
 
     return NextResponse.json({
       success: true,
@@ -282,7 +264,8 @@ export async function POST(req: Request) {
         frozen: balanceBefore.frozen || 0
       },
       balanceAfter: balanceAfter,
-      tradesInSession: userTradesInSession + 1
+      tradesInSession: userTradesInSession + 1,
+      status: 'pending'
     });
 
   } catch (error) {

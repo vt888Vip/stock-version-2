@@ -1,115 +1,57 @@
 import { NextResponse } from 'next/server';
 import { getMongoDb } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
-import { Db, ObjectId } from 'mongodb';
+import { Db } from 'mongodb';
 import mongoose from 'mongoose';
+import TradingSessionModel from '@/models/TradingSession';
+import amqp from 'amqplib';
 
-// ✅ GLOBAL LOCK MAP để tránh concurrent processing cho cùng 1 session
-const sessionLocks = new Map();
-const LOCK_TIMEOUT = 30000; // 30 seconds timeout
+// RabbitMQ Configuration
+const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqps://seecjpys:zQCC056kIx1vnMmrImQqAAVbVUUfmk0M@fuji.lmq.cloudamqp.com/seecjpys';
+const SETTLEMENTS_QUEUE = 'settlements';
 
-// ✅ HÀM TẠO DISTRIBUTED LOCK
-async function acquireSessionLock(sessionId: string, db: Db) {
-  const lockKey = `session_lock_${sessionId}`;
-  const lockTimeout = new Date(Date.now() + LOCK_TIMEOUT);
-  
+// ✅ HÀM GỬI SETTLEMENT MESSAGE VÀO QUEUE
+async function sendSettlementMessage(settlementData: {
+  sessionId: string;
+  result: 'UP' | 'DOWN';
+  id: string;
+  timestamp: string;
+}): Promise<boolean> {
   try {
-    // Tạo hoặc cập nhật lock trong database
-    const lockResult = await db.collection('session_locks').findOneAndUpdate(
-      { 
-        _id: lockKey,
-        $or: [
-          { lockedUntil: { $lt: new Date() } }, // Lock đã hết hạn
-          { lockedUntil: { $exists: false } }    // Chưa có lock
-        ]
-      },
+    console.log('📤 [QUEUE] Gửi settlement message:', settlementData);
+    
+    const connection = await amqp.connect(RABBITMQ_URL);
+    const channel = await connection.createChannel();
+    
+    // Đảm bảo queue tồn tại
+    await channel.assertQueue(SETTLEMENTS_QUEUE, {
+      durable: true,
+      maxPriority: 10
+    });
+    
+    // Gửi message
+    const success = channel.sendToQueue(
+      SETTLEMENTS_QUEUE,
+      Buffer.from(JSON.stringify(settlementData)),
       {
-        $set: {
-          _id: lockKey,
-          sessionId: sessionId,
-          lockedAt: new Date(),
-          lockedUntil: lockTimeout,
-          processId: `${process.env.VERCEL_REGION || 'local'}_${Date.now()}_${Math.random()}`
-        }
-      },
-      { 
-        upsert: true,
-        returnDocument: 'after'
+        persistent: true,
+        priority: 1
       }
     );
     
-    if (lockResult) {
-      console.log(`🔒 [LOCK] Acquired lock for session ${sessionId}`);
-      return lockResult.processId;
+    await channel.close();
+    await connection.close();
+    
+    if (success) {
+      console.log('✅ [QUEUE] Đã gửi settlement message thành công:', settlementData.id);
+    } else {
+      console.log('❌ [QUEUE] Không thể gửi settlement message');
     }
     
-    return null;
+    return success;
   } catch (error) {
-    console.error(`❌ [LOCK] Failed to acquire lock for session ${sessionId}:`, error);
-    return null;
-  }
-}
-
-// ✅ HÀM GIẢI PHÓNG LOCK
-async function releaseSessionLock(sessionId: string, processId: string, db: Db) {
-  try {
-    await db.collection('session_locks').deleteOne({
-      _id: `session_lock_${sessionId}`,
-      processId: processId
-    });
-    console.log(`🔓 [LOCK] Released lock for session ${sessionId}`);
-  } catch (error) {
-    console.error(`❌ [LOCK] Failed to release lock for session ${sessionId}:`, error);
-  }
-}
-
-// ✅ HÀM CLEANUP STUCK LOCKS
-async function cleanupStuckLocks(db: Db) {
-  try {
-    const stuckLocks = await db.collection('session_locks').find({
-      lockedUntil: { $lt: new Date() }
-    }).toArray();
-    
-    if (stuckLocks.length > 0) {
-      console.log(`🧹 [CLEANUP] Found ${stuckLocks.length} stuck locks, cleaning up...`);
-      
-      for (const lock of stuckLocks) {
-        await db.collection('session_locks').deleteOne({ _id: lock._id });
-        console.log(`🧹 [CLEANUP] Removed stuck lock: ${lock._id}`);
-      }
-    }
-  } catch (error) {
-    console.error('❌ [CLEANUP] Error cleaning up stuck locks:', error);
-  }
-}
-
-// ✅ HÀM CLEANUP STUCK TRADES
-async function cleanupStuckTrades(db: Db  ) {
-  try {
-    const stuckTrades = await db.collection('trades').find({
-      processing: true,
-      processingStartedAt: { $lt: new Date(Date.now() - 60000) } // > 1 phút
-    }).toArray();
-    
-    if (stuckTrades.length > 0) {
-      console.log(`🧹 [CLEANUP] Found ${stuckTrades.length} stuck trades, resetting...`);
-      
-      await db.collection('trades').updateMany(
-        {
-          processing: true,
-          processingStartedAt: { $lt: new Date(Date.now() - 60000) }
-        },
-        {
-          $set: {
-            processing: false,
-            processingStartedAt: null,
-            processingId: null
-          }
-        }
-      );
-    }
-  } catch (error) {
-    console.error('❌ [CLEANUP] Error cleaning up stuck trades:', error);
+    console.error('❌ [QUEUE] Lỗi gửi settlement message:', error);
+    return false;
   }
 }
 
@@ -149,17 +91,11 @@ export async function POST(req: Request) {
     const db = await getMongoDb();
     console.log(`✅ [${requestId}] Kết nối database thành công`);
     
-    // ✅ CLEANUP: Dọn dẹp stuck locks và trades trước khi xử lý
-    console.log(`🧹 [${requestId}] Bắt đầu cleanup stuck locks và trades`);
-    await cleanupStuckLocks(db);
-    await cleanupStuckTrades(db);
-    console.log(`✅ [${requestId}] Cleanup hoàn thành`);
-    
     // ✅ BƯỚC 1: KIỂM TRA XEM SESSION ĐÃ ĐƯỢC XỬ LÝ HOÀN TOÀN CHƯA
     console.log(`🔍 [${requestId}] Kiểm tra session: ${sessionId}`);
     const quickCheck = await db.collection('trading_sessions').findOne(
       { sessionId },
-      { projection: { sessionId: 1, status: 1, result: 1, processingComplete: 1, endTime: 1, _id: 0 } }
+      { projection: { sessionId: 1, status: 1, result: 1, processingComplete: 1, endTime: 1, settlementQueued: 1, _id: 0 } }
     );
     
     if (!quickCheck) {
@@ -176,6 +112,7 @@ export async function POST(req: Request) {
       status: quickCheck.status,
       result: quickCheck.result,
       processingComplete: quickCheck.processingComplete,
+      settlementQueued: quickCheck.settlementQueued,
       endTime: quickCheck.endTime
     });
     
@@ -191,47 +128,29 @@ export async function POST(req: Request) {
       });
     }
     
-    // ✅ BƯỚC 3: KIỂM TRA XEM CÓ ĐANG CÓ PROCESS KHÁC XỬ LÝ KHÔNG
-    const existingLock = await db.collection('session_locks').findOne({
-      _id: `session_lock_${sessionId}`,
-      lockedUntil: { $gt: new Date() }
-    });
-    
-    if (existingLock) {
-      console.log(`⏳ [WAIT] Session ${sessionId} đang được xử lý bởi process khác`);
+    // ✅ BƯỚC 2.5: KIỂM TRA XEM SESSION ĐÃ ĐƯỢC GỬI VÀO QUEUE CHƯA
+    if (quickCheck.settlementQueued) {
+      console.log(`📤 [${requestId}] Session ${sessionId} đã được gửi vào queue, chờ worker xử lý`);
       return NextResponse.json({
         hasResult: false,
-        message: 'Session is being processed by another instance',
+        message: 'Settlement already queued, waiting for worker processing',
         shouldRetry: true,
-        retryAfter: 2000 // Retry after 2 seconds
+        retryAfter: 3000 // Retry sau 3 giây
       });
     }
     
-    // ✅ BƯỚC 4: ACQUIRE DISTRIBUTED LOCK
-    const lockProcessId = await acquireSessionLock(sessionId, db);
-    if (!lockProcessId) {
-      console.log(`🚫 [LOCK FAILED] Không thể acquire lock cho session ${sessionId}`);
-      return NextResponse.json({
-        hasResult: false,
-        message: 'Could not acquire processing lock',
-        shouldRetry: true,
-        retryAfter: 1000
-      });
-    }
-    
-    // ✅ BƯỚC 5: BẮT ĐẦU TRANSACTION VỚI LOCK
+    // ✅ BƯỚC 3: BẮT ĐẦU TRANSACTION
     const session = await mongoose.startSession();
     
     try {
       const result = await session.withTransaction(async () => {
         // ✅ DOUBLE-CHECK: Kiểm tra lại xem session có đã được xử lý không
-        const tradingSession = await db.collection('trading_sessions').findOne(
+        const tradingSession = await TradingSessionModel.findOne(
           { sessionId },
           { 
-            projection: { result: 1, status: 1, actualResult: 1, endTime: 1, processingComplete: 1 },
-            session 
+            result: 1, status: 1, actualResult: 1, endTime: 1, processingComplete: 1
           }
-        );
+        ).session(session);
         
         if (!tradingSession) {
           throw new Error('Session not found');
@@ -258,30 +177,26 @@ export async function POST(req: Request) {
           console.log(`🎲 Session ${sessionId} đã kết thúc nhưng chưa có kết quả, tạo kết quả random`);
           
           // ✅ ATOMIC UPDATE với version control
-          const updatedSession = await db.collection('trading_sessions').findOneAndUpdate(
+          const updatedSession = await TradingSessionModel.findOneAndUpdate(
             { 
               sessionId,
               result: null, // Chỉ update nếu chưa có result
               processingComplete: { $ne: true } // Và chưa processing complete
             },
             { 
-              $set: { 
-                result: Math.random() < 0.5 ? 'UP' : 'DOWN',
-                actualResult: Math.random() < 0.5 ? 'UP' : 'DOWN',
-                status: 'COMPLETED',
-                completedAt: now,
-                updatedAt: now,
-                createdBy: 'system_random',
-                processingStarted: true, // ✅ ĐÁNH DẤU BẮT ĐẦU XỬ LÝ
-                processingStartedAt: now
-              }
+              result: Math.random() < 0.5 ? 'UP' : 'DOWN',
+              actualResult: Math.random() < 0.5 ? 'UP' : 'DOWN',
+              status: 'COMPLETED',
+              completedAt: now,
+              createdBy: 'system_random',
+              processingStarted: true,
+              processingStartedAt: now
             },
             { 
-              returnDocument: 'after',
-              upsert: false,
-              session
+              new: true,
+              upsert: false
             }
-          );
+          ).session(session);
           
           if (updatedSession) {
             console.log(`🎲 Đã tạo kết quả random: ${updatedSession.result} cho session ${sessionId}`);
@@ -317,83 +232,77 @@ export async function POST(req: Request) {
           };
         }
 
-        // ✅ BƯỚC XỬ LÝ TRADES VỚI IDEMPOTENCY
-        console.log(`🔄 [PROCESS TRADES] Bắt đầu xử lý trades cho session ${sessionId}`);
+        // ✅ KIỂM TRA LẠI TRONG TRANSACTION: Xem session đã được gửi vào queue chưa
+        const sessionInTransaction = await TradingSessionModel.findOne(
+          { sessionId },
+          { settlementQueued: 1 }
+        ).session(session);
         
-        // ✅ KIỂM TRA XEM TRADES ĐÃ ĐƯỢC XỬ LÝ CHƯA
-        const pendingTradesCount = await db.collection('trades').countDocuments({
-          sessionId,
-          status: 'pending',
-          // ✅ THÊM ĐIỀU KIỆN: Chỉ xử lý trades chưa được đánh dấu processing
-          $or: [
-            { processing: { $exists: false } },
-            { processing: false },
-            { processingStartedAt: { $lt: new Date(Date.now() - 30000) } } // Timeout 30s
-          ]
-        }, { session });
+        if (sessionInTransaction?.settlementQueued) {
+          console.log(`📤 [QUEUE] Session ${sessionId} đã được gửi vào queue trong transaction, bỏ qua`);
+          return {
+            hasResult: false,
+            message: 'Settlement already queued in transaction',
+            shouldRetry: true,
+            retryAfter: 2000
+          };
+        }
         
-        if (pendingTradesCount === 0) {
-          console.log(`✅ [NO TRADES] Không có trades nào cần xử lý cho session ${sessionId}`);
+        // ✅ CHUYỂN SANG QUEUE: Gửi settlement message vào queue thay vì xử lý trực tiếp
+        console.log(`📤 [QUEUE] Gửi settlement message cho session ${sessionId}`);
+        
+        const settlementData = {
+          sessionId: sessionId,
+          result: tradingSession.result as 'UP' | 'DOWN',
+          id: `settlement_${sessionId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          timestamp: new Date().toISOString()
+        };
+
+        // Gửi message vào queue
+        const queueResult = await sendSettlementMessage(settlementData);
+        
+        if (queueResult) {
+          console.log(`✅ [QUEUE] Đã gửi settlement message thành công cho session ${sessionId}`);
           
-          // ✅ ĐÁNH DẤU SESSION ĐÃ XỬ LÝ XONG
+          // Đánh dấu session đã được gửi vào queue
           await db.collection('trading_sessions').updateOne(
             { sessionId },
             {
               $set: {
-                processingComplete: true,
-                processingCompletedAt: new Date()
+                processingStarted: true,
+                processingStartedAt: new Date(),
+                settlementQueued: true,
+                settlementQueuedAt: new Date()
               }
             },
             { session }
           );
           
           return {
-            hasResult: true,
-            result: tradingSession.actualResult || tradingSession.result,
-            sessionStatus: tradingSession.status,
-            updatedTrades: 0,
-            isRandom: tradingSession.createdBy === 'system_random',
-            message: 'No pending trades'
+            hasResult: false,
+            message: 'Settlement queued for processing',
+            shouldRetry: true,
+            retryAfter: 2000 // Retry sau 2 giây
           };
-        }
-
-        // ✅ ĐÁNH DẤU TRADES ĐANG ĐƯỢC XỬ LÝ (ATOMIC)
-        const batchSize = 20;
-        const markProcessingResult = await db.collection('trades').updateMany(
-          {
-            sessionId,
-            status: 'pending',
-            $or: [
-              { processing: { $exists: false } },
-              { processing: false },
-              { processingStartedAt: { $lt: new Date(Date.now() - 30000) } }
-            ]
-          },
-          {
-            $set: {
-              processing: true,
-              processingStartedAt: new Date(),
-              processingId: lockProcessId
-            }
-          },
-          { session }
-        );
-        
-        if (markProcessingResult.modifiedCount === 0) {
-          console.log(`⚠️ [NO TRADES TO MARK] Không có trades nào được đánh dấu processing cho session ${sessionId}`);
+        } else {
+          console.log(`❌ [QUEUE] Không thể gửi settlement message cho session ${sessionId}`);
           
-          // Kiểm tra xem tất cả trades đã completed chưa
-          const allCompletedCount = await db.collection('trades').countDocuments({
+          // Fallback: Xử lý trực tiếp nếu không gửi được queue
+          console.log(`🔄 [FALLBACK] Xử lý settlement trực tiếp cho session ${sessionId}`);
+          
+          // ✅ BƯỚC XỬ LÝ TRADES VỚI IDEMPOTENCY
+          console.log(`🔄 [PROCESS TRADES] Bắt đầu xử lý trades cho session ${sessionId}`);
+          
+          // ✅ KIỂM TRA XEM TRADES ĐÃ ĐƯỢC XỬ LÝ CHƯA
+          const pendingTradesCount = await db.collection('trades').countDocuments({
             sessionId,
-            status: 'completed'
+            status: 'pending'
           }, { session });
           
-          const totalTradesCount = await db.collection('trades').countDocuments({
-            sessionId
-          }, { session });
-          
-          if (allCompletedCount === totalTradesCount && totalTradesCount > 0) {
-            // Tất cả trades đã completed, đánh dấu session hoàn thành
+          if (pendingTradesCount === 0) {
+            console.log(`✅ [NO TRADES] Không có trades nào cần xử lý cho session ${sessionId}`);
+            
+            // ✅ ĐÁNH DẤU SESSION ĐÃ XỬ LÝ XONG
             await db.collection('trading_sessions').updateOne(
               { sessionId },
               {
@@ -404,155 +313,109 @@ export async function POST(req: Request) {
               },
               { session }
             );
+            
+            return {
+              hasResult: true,
+              result: tradingSession.actualResult || tradingSession.result,
+              sessionStatus: tradingSession.status,
+              updatedTrades: 0,
+              isRandom: tradingSession.createdBy === 'system_random',
+              message: 'No pending trades'
+            };
           }
+
+          // ✅ LẤY TẤT CẢ TRADES PENDING
+          const pendingTrades = await db.collection('trades')
+            .find({ 
+              sessionId,
+              status: 'pending'
+            })
+            .toArray();
           
-          return {
-            hasResult: true,
-            result: tradingSession.actualResult || tradingSession.result,
-            sessionStatus: tradingSession.status,
-            updatedTrades: 0,
-            message: 'Trades already being processed'
-          };
-        }
-        
-        console.log(`📊 [MARK PROCESSING] Đã đánh dấu ${markProcessingResult.modifiedCount} trades đang xử lý`);
-        
-        // ✅ LẤY TRADES ĐÃ ĐƯỢC ĐÁNH DẤU BỞI PROCESS NÀY
-        const tradesToProcess = await db.collection('trades')
-          .find({ 
-            sessionId,
-            processing: true,
-            processingId: lockProcessId
-          })
-          .limit(batchSize)
-          .toArray();
-        
-        console.log(`📊 [PROCESSING] Xử lý ${tradesToProcess.length} trades cho session ${sessionId}`);
-        
-        let processedTrades = 0;
-        let balanceErrors = 0;
-        
-        // ✅ XỬ LÝ TỪNG TRADE VỚI BALANCE VALIDATION MẠNH MẼ
-        for (const trade of tradesToProcess) {
-          const isWin = trade.direction.toLowerCase() === tradingSession.result?.toLowerCase();
-          const profit = isWin ? Math.floor(trade.amount * 0.9) : 0;
+          console.log(`📊 [PROCESSING] Xử lý ${pendingTrades.length} trades cho session ${sessionId}`);
           
-          console.log(`🎯 [TRADE] ${trade._id}: ${trade.direction} vs ${tradingSession.result} = ${isWin ? 'WIN' : 'LOSE'}`);
+          let processedTrades = 0;
+          let balanceErrors = 0;
           
-          if (isWin) {
-            // ✅ THẮNG: Atomic balance update với validation
-            const balanceUpdate = await db.collection('users').findOneAndUpdate(
-              { 
-                _id: trade.userId,
-                'balance.frozen': { $gte: trade.amount } // Kiểm tra frozen đủ
-              },
-              {
-                $inc: {
-                  'balance.available': trade.amount + profit,
-                  'balance.frozen': -trade.amount
+                     // ✅ XỬ LÝ TỪNG TRADE
+           for (const trade of pendingTrades) {
+             const isWin = trade.direction.toLowerCase() === tradingSession.result?.toLowerCase();
+             // ✅ TỶ LỆ 10 ĂN 9: Đặt 10 thắng 9, đặt 100 thắng 90
+             const profit = isWin ? Math.floor(trade.amount * 0.9) : 0;
+            
+            console.log(`🎯 [TRADE] ${trade._id}: ${trade.direction} vs ${tradingSession.result} = ${isWin ? 'WIN' : 'LOSE'}`);
+            
+            if (isWin) {
+              // ✅ THẮNG: Atomic balance update
+              const balanceUpdate = await db.collection('users').findOneAndUpdate(
+                { 
+                  _id: trade.userId,
+                  'balance.frozen': { $gte: trade.amount }
                 },
-                $set: { updatedAt: new Date() }
-              },
-              { 
-                session,
-                returnDocument: 'after'
+                {
+                  $inc: {
+                    'balance.available': trade.amount + profit,
+                    'balance.frozen': -trade.amount
+                  },
+                  $set: { updatedAt: new Date() }
+                },
+                { 
+                  session,
+                  returnDocument: 'after'
+                }
+              );
+              
+              if (!balanceUpdate) {
+                balanceErrors++;
+                console.error(`🚨 [WIN ERROR] User ${trade.userId}: frozen không đủ ${trade.amount}`);
+                continue;
               }
+            } else {
+              // ✅ THUA: Atomic balance update
+              const balanceUpdate = await db.collection('users').findOneAndUpdate(
+                { 
+                  _id: trade.userId,
+                  'balance.frozen': { $gte: trade.amount }
+                },
+                {
+                  $inc: {
+                    'balance.frozen': -trade.amount
+                  },
+                  $set: { updatedAt: new Date() }
+                },
+                { 
+                  session,
+                  returnDocument: 'after'
+                }
+              );
+              
+              if (!balanceUpdate) {
+                balanceErrors++;
+                console.error(`🚨 [LOSE ERROR] User ${trade.userId}: frozen không đủ ${trade.amount}`);
+                continue;
+              }
+            }
+            
+            // ✅ CẬP NHẬT TRADE THÀNH CÔNG
+            await db.collection('trades').updateOne(
+              { _id: trade._id },
+              {
+                $set: {
+                  status: 'completed',
+                  result: isWin ? 'win' : 'lose',
+                  profit: profit,
+                  appliedToBalance: true,
+                  completedAt: new Date(),
+                  updatedAt: new Date()
+                }
+              },
+              { session }
             );
             
-            if (!balanceUpdate) {
-              balanceErrors++;
-              console.error(`🚨 [WIN ERROR] User ${trade.userId}: frozen không đủ ${trade.amount}`);
-              
-              // Cập nhật trade với lỗi
-              await db.collection('trades').updateOne(
-                { _id: trade._id },
-                {
-                  $set: {
-                    status: 'error',
-                    result: 'balance_error',
-                    profit: 0,
-                    processing: false,
-                    appliedToBalance: true, // ✅ THÊM DÒNG NÀY
-                    completedAt: new Date(),
-                    balanceError: true,
-                    balanceErrorReason: 'frozen_insufficient_for_win'
-                  }
-                },
-                { session }
-              );
-              continue;
-            }
-          } else {
-            // ✅ THUA: Atomic balance update với validation
-            const balanceUpdate = await db.collection('users').findOneAndUpdate(
-              { 
-                _id: trade.userId,
-                'balance.frozen': { $gte: trade.amount }
-              },
-              {
-                $inc: {
-                  'balance.frozen': -trade.amount
-                },
-                $set: { updatedAt: new Date() }
-              },
-              { 
-                session,
-                returnDocument: 'after'
-              }
-            );
-            
-            if (!balanceUpdate) {
-              balanceErrors++;
-              console.error(`🚨 [LOSE ERROR] User ${trade.userId}: frozen không đủ ${trade.amount}`);
-              
-              await db.collection('trades').updateOne(
-                { _id: trade._id },
-                {
-                  $set: {
-                    status: 'error',
-                    result: 'balance_error',
-                    profit: 0,
-                    processing: false,
-                    appliedToBalance: true, // ✅ THÊM DÒNG NÀY
-                    completedAt: new Date(),
-                    balanceError: true,
-                    balanceErrorReason: 'frozen_insufficient'
-                  }
-                },
-                { session }
-              );
-              continue;
-            }
+            processedTrades++;
           }
           
-          // ✅ CẬP NHẬT TRADE THÀNH CÔNG
-          await db.collection('trades').updateOne(
-            { _id: trade._id },
-            {
-              $set: {
-                status: 'completed',
-                result: isWin ? 'win' : 'lose',
-                profit: profit,
-                processing: false,
-                appliedToBalance: true, // ✅ THÊM DÒNG NÀY
-                completedAt: new Date(),
-                updatedAt: new Date()
-              }
-            },
-            { session }
-          );
-          
-          processedTrades++;
-        }
-        
-        // ✅ KIỂM TRA XEM TẤT CẢ TRADES ĐÃ HOÀN THÀNH CHƯA
-        const remainingPendingCount = await db.collection('trades').countDocuments({
-          sessionId,
-          status: { $in: ['pending'] }
-        }, { session });
-        
-        if (remainingPendingCount === 0) {
-          // ✅ TẤT CẢ TRADES ĐÃ HOÀN THÀNH
+          // ✅ ĐÁNH DẤU SESSION HOÀN THÀNH
           await db.collection('trading_sessions').updateOne(
             { sessionId },
             {
@@ -564,21 +427,19 @@ export async function POST(req: Request) {
             { session }
           );
           
-          console.log(`🎉 [COMPLETE] Session ${sessionId} đã hoàn thành xử lý tất cả trades`);
-        }
-        
-        console.log(`✅ [BATCH COMPLETE] Xử lý ${processedTrades}/${tradesToProcess.length} trades, ${balanceErrors} lỗi`);
+          console.log(`✅ [COMPLETE] Session ${sessionId} đã hoàn thành xử lý ${processedTrades} trades, ${balanceErrors} lỗi`);
 
-        return {
-          hasResult: true,
-          result: tradingSession.actualResult || tradingSession.result,
-          sessionStatus: tradingSession.status,
-          updatedTrades: processedTrades,
-          totalProcessed: processedTrades,
-          errors: balanceErrors,
-          isRandom: tradingSession.createdBy === 'system_random',
-          processingComplete: remainingPendingCount === 0
-        };
+          return {
+            hasResult: true,
+            result: tradingSession.actualResult || tradingSession.result,
+            sessionStatus: tradingSession.status,
+            updatedTrades: processedTrades,
+            totalProcessed: processedTrades,
+            errors: balanceErrors,
+            isRandom: tradingSession.createdBy === 'system_random',
+            processingComplete: true
+          };
+        }
       });
 
       return NextResponse.json(result);
@@ -602,11 +463,6 @@ export async function POST(req: Request) {
       
     } finally {
       await session.endSession();
-      
-      // ✅ GIẢI PHÓNG LOCK
-      if (lockProcessId) {
-        await releaseSessionLock(sessionId, lockProcessId, db);
-      }
     }
 
   } catch (error) {

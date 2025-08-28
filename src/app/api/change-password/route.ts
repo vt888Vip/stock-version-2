@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/auth';
-import { ObjectId } from 'mongodb';
-import clientPromise from '@/lib/mongodb';
 import { hash, compare } from 'bcryptjs';
-import { getMongoDb } from '@/lib/db';
+import { connectToDatabase } from '@/lib/db';
+import User from '@/models/User';
 
 // Tạo một Map đơn giản để theo dõi các yêu cầu đổi mật khẩu
 const rateLimitMap = new Map<string, { count: number, timestamp: number }>();
@@ -122,12 +121,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Kết nối database
-    const db = await getMongoDb();
+    await connectToDatabase();
 
     // Lấy thông tin người dùng với mật khẩu đã hash
-    const userData = await db.collection('users').findOne({
-      _id: new ObjectId(tokenData.userId)
-    });
+    const userData = await User.findById(tokenData.userId);
 
     if (!userData) {
       return NextResponse.json(
@@ -158,33 +155,36 @@ export async function POST(req: NextRequest) {
     const hashedPassword = await hash(newPassword, 12);
 
     // Cập nhật mật khẩu trong database
-    const result = await db.collection('users').updateOne(
-      { _id: new ObjectId(tokenData.userId) },
+    const result = await User.findByIdAndUpdate(
+      tokenData.userId,
       {
-        $set: {
-          password: hashedPassword,
-          updatedAt: new Date(),
-          passwordChangedAt: new Date()
-        }
+        password: hashedPassword,
+        passwordChangedAt: new Date()
       }
     );
 
-    if (result.modifiedCount === 0) {
+    if (!result) {
       return NextResponse.json(
         { success: false, message: 'Không thể cập nhật mật khẩu' },
         { status: 500 }
       );
     }
 
-    // Ghi log hoạt động đổi mật khẩu
-    await db.collection('user_activities').insertOne({
-      userId: tokenData.userId,
-      action: 'change_password',
-      timestamp: new Date(),
-      ip: ip,
-      userAgent: req.headers.get('user-agent') || 'unknown',
-      success: true
-    });
+    // Ghi log hoạt động đổi mật khẩu (có thể lưu vào User model hoặc tạo model riêng)
+    await User.findByIdAndUpdate(
+      tokenData.userId,
+      {
+        $push: {
+          activities: {
+            action: 'change_password',
+            timestamp: new Date(),
+            ip: ip,
+            userAgent: req.headers.get('user-agent') || 'unknown',
+            success: true
+          }
+        }
+      }
+    );
 
     return NextResponse.json({
       success: true,

@@ -2,7 +2,8 @@ import amqp, { Channel, Connection } from 'amqplib';
 
 // Cấu hình RabbitMQ
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
-const TRADE_QUEUE = 'trade_orders';
+const TRADE_QUEUE = 'orders';
+const SETTLEMENT_QUEUE = 'settlements';
 const TRADE_RESULT_QUEUE = 'trade_results';
 
 let connection: Connection | null = null;
@@ -35,6 +36,12 @@ export async function connectRabbitMQ(): Promise<{ connection: Connection; chann
       
       // Tạo queue cho lệnh đặt
       await channel.assertQueue(TRADE_QUEUE, {
+        durable: true, // Queue sẽ được lưu trữ khi restart
+        maxPriority: 10 // Hỗ trợ priority
+      });
+
+      // Tạo queue cho settlement
+      await channel.assertQueue(SETTLEMENT_QUEUE, {
         durable: true, // Queue sẽ được lưu trữ khi restart
         maxPriority: 10 // Hỗ trợ priority
       });
@@ -91,6 +98,46 @@ export async function sendTradeOrder(orderData: {
     }
   } catch (error) {
     console.error('❌ Lỗi gửi lệnh vào queue:', error);
+    return false;
+  }
+}
+
+/**
+ * Gửi settlement vào queue
+ */
+export async function sendSettlementOrder(settlementData: {
+  sessionId: string;
+  result: 'UP' | 'DOWN';
+  adminUserId: string;
+  priority?: number;
+}): Promise<boolean> {
+  try {
+    const { channel } = await connectRabbitMQ();
+    
+    const message = {
+      ...settlementData,
+      timestamp: new Date().toISOString(),
+      id: `settlement_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    };
+
+    const success = channel.sendToQueue(
+      SETTLEMENT_QUEUE,
+      Buffer.from(JSON.stringify(message)),
+      {
+        persistent: true, // Message sẽ được lưu trữ
+        priority: settlementData.priority || 0
+      }
+    );
+
+    if (success) {
+      console.log(`📤 Đã gửi settlement vào queue: ${message.id}`);
+      return true;
+    } else {
+      console.error('❌ Không thể gửi settlement vào queue');
+      return false;
+    }
+  } catch (error) {
+    console.error('❌ Lỗi gửi settlement vào queue:', error);
     return false;
   }
 }

@@ -1,0 +1,29 @@
+{
+  "name": "trading-worker",
+  "version": "1.0.0",
+  "description": "Trade processing worker with RabbitMQ and MongoDB",
+  "type": "module",
+  "main": "worker.js",
+  "scripts": {
+    "start": "node worker.js",
+    "dev": "nodemon worker.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.9",
+    "mongodb": "^6.3.0",
+    "mongoose": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "keywords": [
+    "trading",
+    "worker",
+    "rabbitmq",
+    "mongodb",
+    "queue"
+  ],
+  "author": "Trading Platform",
+  "license": "MIT"
+}

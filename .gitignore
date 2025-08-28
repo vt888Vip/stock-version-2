@@ -25,3 +25,48 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Runtime data
+pids/
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+
+# Temporary folders
+tmp/
+temp/
+
+# Upload files (except verification folder structure)
+public/uploads/*
+!public/uploads/verification/
+
+# Cache
+.cache/
+.parcel-cache/
+
+# Build artifacts
+dist/
+build/
+
+# Test files
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts

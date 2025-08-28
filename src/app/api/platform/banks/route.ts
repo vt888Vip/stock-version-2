@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/auth';
-import clientPromise from '@/lib/mongodb';
+import { connectToDatabase } from '@/lib/db';
+import Bank from '@/models/Bank';
 
 export async function GET(req: NextRequest) {
   try {
@@ -38,30 +39,22 @@ export async function GET(req: NextRequest) {
     }
 
     // Kết nối đến MongoDB
-    const client = await clientPromise;
-    const db = client.db();
+    await connectToDatabase();
 
     // Lấy thông tin ngân hàng của nền tảng từ collection banks
-    // Thử collection banks trước, nếu không có thì dùng platform_banks
-    let platformBanks = await db.collection('banks').find({}).toArray();
-    console.log('Found banks in collection "banks":', platformBanks.length);
-    
-    // Nếu không có dữ liệu trong collection banks, thử platform_banks
-    if (platformBanks.length === 0) {
-      platformBanks = await db.collection('platform_banks').find({}).toArray();
-      console.log('Found banks in collection "platform_banks":', platformBanks.length);
-    }
+    const platformBanks = await Bank.find({ status: 'active' }).lean();
+    console.log('Found banks:', platformBanks.length);
     
     console.log('Raw banks data:', platformBanks);
 
     return NextResponse.json({
       success: true,
       banks: platformBanks.map(bank => ({
-        bankName: bank.bankName || bank.name || bank.bank,
-        accountNumber: bank.accountNumber || bank.account,
-        accountHolder: bank.accountHolder || bank.holder || bank.accountName,
-        branch: bank.branch || bank.chiNhanh || '',
-        isActive: bank.isActive !== false // Mặc định là true nếu không có trường isActive
+        bankName: bank.name,
+        accountNumber: bank.accountNumber,
+        accountHolder: bank.accountHolder,
+        branch: bank.branch || '',
+        isActive: bank.status === 'active'
       })).filter(bank => bank.isActive && bank.bankName && bank.accountNumber) // Chỉ trả về các ngân hàng đang hoạt động và có đủ thông tin
     });
   } catch (error) {
