@@ -97,34 +97,43 @@ export async function GET(request: NextRequest) {
     if (sessionChanged) {
       // Tạo phiên mới nếu cần
       if (!currentSession || sessionEnded) {
-        // Tạo kết quả ngẫu nhiên (50% UP, 50% DOWN)
-        const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
+        // ✅ KIỂM TRA XEM SESSION ĐÃ TỒN TẠI CHƯA
+        const existingSession = await db.collection('trading_sessions').findOne({ sessionId });
         
-        const newSession = {
-          sessionId,
-          startTime: currentMinute,
-          endTime: nextMinute,
-          status: 'ACTIVE',
-          result, // Kết quả được tạo sẵn
-          processingComplete: false, // ✅ Thêm field này để đánh dấu chưa xử lý
-          totalTrades: 0,
-          totalWins: 0,
-          totalLosses: 0,
-          totalWinAmount: 0,
-          totalLossAmount: 0,
-          createdAt: now,
-          updatedAt: now
-        };
+        if (existingSession) {
+          // ✅ SỬ DỤNG KẾT QUẢ CÓ SẴN
+          console.log(`✅ Sử dụng session có sẵn ${sessionId} với kết quả: ${existingSession.result}`);
+          currentSession = existingSession;
+        } else {
+          // ✅ CHỈ TẠO KẾT QUẢ RANDOM KHI THỰC SỰ TẠO SESSION MỚI
+          const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
+          
+          const newSession = {
+            sessionId,
+            startTime: currentMinute,
+            endTime: nextMinute,
+            status: 'ACTIVE',
+            result, // Kết quả được tạo sẵn
+            processingComplete: false,
+            totalTrades: 0,
+            totalWins: 0,
+            totalLosses: 0,
+            totalWinAmount: 0,
+            totalLossAmount: 0,
+            createdAt: now,
+            updatedAt: now
+          };
 
-        // Sử dụng upsert để tránh tạo trùng lặp
-        await db.collection('trading_sessions').updateOne(
-          { sessionId },
-          { $setOnInsert: newSession },
-          { upsert: true }
-        );
-        
-        currentSession = newSession as any;
-        console.log(`✅ Đã tạo phiên mới ${sessionId} với kết quả: ${result}`);
+          // Sử dụng upsert để tránh tạo trùng lặp
+          await db.collection('trading_sessions').updateOne(
+            { sessionId },
+            { $setOnInsert: newSession },
+            { upsert: true }
+          );
+          
+          currentSession = newSession as any;
+          console.log(`✅ Đã tạo phiên mới ${sessionId} với kết quả: ${result}`);
+        }
       }
     }
 
