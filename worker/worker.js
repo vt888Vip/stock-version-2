@@ -50,9 +50,9 @@ const UserSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-const TradingSession = mongoose.model('TradingSession', TradingSessionSchema);
-const Trade = mongoose.model('Trade', TradeSchema);
-const User = mongoose.model('User', UserSchema);
+const TradingSession = mongoose.model('TradingSession', TradingSessionSchema, 'trading_sessions');
+const Trade = mongoose.model('Trade', TradeSchema, 'trades');
+const User = mongoose.model('User', UserSchema, 'users');
 
 /**
  * Kết nối MongoDB với Mongoose

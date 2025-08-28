@@ -116,8 +116,8 @@ try {
   // Nếu model đã tồn tại, sử dụng lại
   TradingSessionModel = mongoose.model<ITradingSession>('TradingSession');
 } catch {
-  // Nếu chưa có model, tạo mới
-  TradingSessionModel = mongoose.model<ITradingSession>('TradingSession', tradingSessionSchema);
+  // Nếu chưa có model, tạo mới với collection name cụ thể
+  TradingSessionModel = mongoose.model<ITradingSession>('TradingSession', tradingSessionSchema, 'trading_sessions');
 }
 
 export default TradingSessionModel; 

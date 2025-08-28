@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { getMongoDb } from '@/lib/db';
 import { NextRequest } from 'next/server';
 import amqp from 'amqplib';
+import TradingSessionModel from '@/models/TradingSession';
 
 // RabbitMQ Configuration
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqps://seecjpys:zQCC056kIx1vnMmrImQqAAVbVUUfmk0M@fuji.lmq.cloudamqp.com/seecjpys';
@@ -60,10 +61,10 @@ export async function GET(request: NextRequest) {
     const sessionId = `${currentMinute.getUTCFullYear()}${String(currentMinute.getUTCMonth() + 1).padStart(2, '0')}${String(currentMinute.getUTCDate()).padStart(2, '0')}${String(currentMinute.getUTCHours()).padStart(2, '0')}${String(currentMinute.getUTCMinutes()).padStart(2, '0')}`;
 
     // Lấy phiên hiện tại từ database
-    let currentSession = await db.collection('trading_sessions').findOne({ 
+    let currentSession = await TradingSessionModel.findOne({ 
       sessionId: sessionId,
       status: { $in: ['ACTIVE', 'COMPLETED'] }
-    });
+    }).lean();
 
     // Kiểm tra xem phiên hiện tại có kết thúc chưa
     const sessionEnded = currentSession && currentSession.endTime <= now;
@@ -100,7 +101,7 @@ export async function GET(request: NextRequest) {
       // Tạo phiên mới nếu cần
       if (!currentSession || sessionEnded) {
         // ✅ KIỂM TRA XEM SESSION ĐÃ TỒN TẠI CHƯA
-        const existingSession = await db.collection('trading_sessions').findOne({ sessionId });
+        const existingSession = await TradingSessionModel.findOne({ sessionId }).lean();
         
         if (existingSession) {
           // ✅ SỬ DỤNG KẾT QUẢ CÓ SẴN
@@ -110,7 +111,7 @@ export async function GET(request: NextRequest) {
           // ✅ CHỈ TẠO KẾT QUẢ RANDOM KHI THỰC SỰ TẠO SESSION MỚI
           const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
           
-          const newSession = {
+          const newSession = new TradingSessionModel({
             sessionId,
             startTime: currentMinute,
             endTime: nextMinute,
@@ -121,19 +122,17 @@ export async function GET(request: NextRequest) {
             totalWins: 0,
             totalLosses: 0,
             totalWinAmount: 0,
-            totalLossAmount: 0,
-            createdAt: now,
-            updatedAt: now
-          };
+            totalLossAmount: 0
+          });
 
           // Sử dụng upsert để tránh tạo trùng lặp
-          await db.collection('trading_sessions').updateOne(
+          await TradingSessionModel.updateOne(
             { sessionId },
             { $setOnInsert: newSession },
             { upsert: true }
           );
           
-          currentSession = newSession as any;
+          currentSession = newSession.toObject() as any;
           console.log(`✅ Đã tạo phiên mới ${sessionId} với kết quả: ${result}`);
         }
       }

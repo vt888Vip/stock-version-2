@@ -91,12 +91,12 @@ export async function POST(req: Request) {
     const db = await getMongoDb();
     console.log(`✅ [${requestId}] Kết nối database thành công`);
     
-    // ✅ BƯỚC 1: KIỂM TRA XEM SESSION ĐÃ ĐƯỢC XỬ LÝ HOÀN TOÀN CHƯA
-    console.log(`🔍 [${requestId}] Kiểm tra session: ${sessionId}`);
-    const quickCheck = await db.collection('trading_sessions').findOne(
-      { sessionId },
-      { projection: { sessionId: 1, status: 1, result: 1, processingComplete: 1, endTime: 1, settlementQueued: 1, _id: 0 } }
-    );
+         // ✅ BƯỚC 1: KIỂM TRA XEM SESSION ĐÃ ĐƯỢC XỬ LÝ HOÀN TOÀN CHƯA
+     console.log(`🔍 [${requestId}] Kiểm tra session: ${sessionId}`);
+     const quickCheck = await TradingSessionModel.findOne(
+       { sessionId },
+       { sessionId: 1, status: 1, result: 1, processingComplete: 1, endTime: 1, settlementQueued: 1, _id: 0 }
+     ).lean();
     
     if (!quickCheck) {
       console.log(`❌ [${requestId}] Không tìm thấy session: ${sessionId}`);
@@ -240,19 +240,18 @@ export async function POST(req: Request) {
         if (queueResult) {
           console.log(`✅ [QUEUE] Đã gửi settlement message thành công cho session ${sessionId}`);
           
-          // Đánh dấu session đã được gửi vào queue
-          await db.collection('trading_sessions').updateOne(
-            { sessionId },
-            {
-              $set: {
-                processingStarted: true,
-                processingStartedAt: new Date(),
-                settlementQueued: true,
-                settlementQueuedAt: new Date()
-              }
-            },
-            { session }
-          );
+                     // Đánh dấu session đã được gửi vào queue
+           await TradingSessionModel.updateOne(
+             { sessionId },
+             {
+               $set: {
+                 processingStarted: true,
+                 processingStartedAt: new Date(),
+                 settlementQueued: true,
+                 settlementQueuedAt: new Date()
+               }
+             }
+           ).session(session);
           
           return {
             hasResult: false,
@@ -278,17 +277,16 @@ export async function POST(req: Request) {
           if (pendingTradesCount === 0) {
             console.log(`✅ [NO TRADES] Không có trades nào cần xử lý cho session ${sessionId}`);
             
-            // ✅ ĐÁNH DẤU SESSION ĐÃ XỬ LÝ XONG
-            await db.collection('trading_sessions').updateOne(
-              { sessionId },
-              {
-                $set: {
-                  processingComplete: true,
-                  processingCompletedAt: new Date()
-                }
-              },
-              { session }
-            );
+                         // ✅ ĐÁNH DẤU SESSION ĐÃ XỬ LÝ XONG
+             await TradingSessionModel.updateOne(
+               { sessionId },
+               {
+                 $set: {
+                   processingComplete: true,
+                   processingCompletedAt: new Date()
+                 }
+               }
+             ).session(session);
             
             return {
               hasResult: true,
@@ -391,17 +389,16 @@ export async function POST(req: Request) {
             processedTrades++;
           }
           
-          // ✅ ĐÁNH DẤU SESSION HOÀN THÀNH
-          await db.collection('trading_sessions').updateOne(
-            { sessionId },
-            {
-              $set: {
-                processingComplete: true,
-                processingCompletedAt: new Date()
-              }
-            },
-            { session }
-          );
+                     // ✅ ĐÁNH DẤU SESSION HOÀN THÀNH
+           await TradingSessionModel.updateOne(
+             { sessionId },
+             {
+               $set: {
+                 processingComplete: true,
+                 processingCompletedAt: new Date()
+               }
+             }
+           ).session(session);
           
           console.log(`✅ [COMPLETE] Session ${sessionId} đã hoàn thành xử lý ${processedTrades} trades, ${balanceErrors} lỗi`);
 
