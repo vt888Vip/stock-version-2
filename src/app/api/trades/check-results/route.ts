@@ -172,54 +172,28 @@ export async function POST(req: Request) {
         const now = new Date();
         const sessionEnded = tradingSession.endTime && tradingSession.endTime <= now;
         
-        // ⚡ RANDOM KẾT QUẢ: Nếu chưa có kết quả và phiên đã kết thúc
+        // ⚡ SỬ DỤNG KẾT QUẢ CÓ SẴN: Nếu chưa có kết quả và phiên đã kết thúc
         if (!tradingSession.result && sessionEnded) {
-          console.log(`🎲 Session ${sessionId} đã kết thúc nhưng chưa có kết quả, tạo kết quả random`);
+          console.log(`❌ Session ${sessionId} đã kết thúc nhưng không có kết quả trong database!`);
           
-          // ✅ ATOMIC UPDATE với version control
-          const updatedSession = await TradingSessionModel.findOneAndUpdate(
-            { 
-              sessionId,
-              result: null, // Chỉ update nếu chưa có result
-              processingComplete: { $ne: true } // Và chưa processing complete
-            },
-            { 
-              result: Math.random() < 0.5 ? 'UP' : 'DOWN',
-              actualResult: Math.random() < 0.5 ? 'UP' : 'DOWN',
-              status: 'COMPLETED',
-              completedAt: now,
-              createdBy: 'system_random',
-              processingStarted: true,
-              processingStartedAt: now
-            },
-            { 
-              new: true,
-              upsert: false
-            }
+          // ✅ Lấy lại session để kiểm tra xem có kết quả không
+          const recheckSession = await TradingSessionModel.findOne(
+            { sessionId },
+            { result: 1, processingComplete: 1 }
           ).session(session);
           
-          if (updatedSession) {
-            console.log(`🎲 Đã tạo kết quả random: ${updatedSession.result} cho session ${sessionId}`);
-            tradingSession.result = updatedSession.result;
-            tradingSession.actualResult = updatedSession.actualResult;
-            tradingSession.status = updatedSession.status;
+          if (recheckSession?.result) {
+            console.log(`✅ Tìm thấy kết quả: ${recheckSession.result} cho session ${sessionId}`);
+            tradingSession.result = recheckSession.result;
+            tradingSession.actualResult = recheckSession.result;
           } else {
-            console.log(`⚠️ Không thể tạo kết quả random cho session ${sessionId}, có thể đã được xử lý`);
-            // Lấy lại session để kiểm tra
-            const recheckSession = await db.collection('trading_sessions').findOne(
-              { sessionId },
-              { projection: { result: 1, processingComplete: 1 }, session }
-            );
-            
-            if (recheckSession?.processingComplete) {
-              return {
-                hasResult: true,
-                result: recheckSession.result,
-                sessionStatus: 'COMPLETED',
-                updatedTrades: 0,
-                message: 'Already processed by another instance'
-              };
-            }
+            console.log(`❌ Session ${sessionId} thực sự không có kết quả, cần kiểm tra lại logic tạo session`);
+            return {
+              hasResult: false,
+              message: 'Session ended but no result found in database',
+              shouldRetry: false,
+              error: 'MISSING_RESULT'
+            };
           }
         }
 
