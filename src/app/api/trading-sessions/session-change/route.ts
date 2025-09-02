@@ -1,41 +1,29 @@
 import { NextResponse } from 'next/server';
 import { getMongoDb } from '@/lib/db';
 import { NextRequest } from 'next/server';
-import amqp from 'amqplib';
+import { publishSettlementMessage } from '@/lib/rabbitmq';
 import TradingSessionModel from '@/models/TradingSession';
 
-// RabbitMQ Configuration
-const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqps://seecjpys:zQCC056kIx1vnMmrImQqAAVbVUUfmk0M@fuji.lmq.cloudamqp.com/seecjpys';
-const SETTLEMENTS_QUEUE = 'settlements';
-
-// Hàm gửi settlement message vào queue
+// Hàm gửi settlement message vào queue sử dụng RabbitMQ Manager
 async function sendSettlementMessage(settlementData: {
   sessionId: string;
   id: string;
   timestamp: string;
 }): Promise<boolean> {
   try {
-    const connection = await amqp.connect(RABBITMQ_URL);
-    const channel = await connection.createChannel();
+    console.log('📤 Gửi settlement message qua RabbitMQ Manager:', settlementData.sessionId);
     
-    // Đảm bảo queue tồn tại
-    await channel.assertQueue(SETTLEMENTS_QUEUE, {
-      durable: true,
-      maxPriority: 10
-    });
+    // Auto-initialize RabbitMQ connection
+    const { initializeRabbitMQ } = await import('@/lib/rabbitmq-auto-init');
+    await initializeRabbitMQ();
     
-    // Gửi message
-    const success = channel.sendToQueue(
-      SETTLEMENTS_QUEUE,
-      Buffer.from(JSON.stringify(settlementData)),
-      {
-        persistent: true,
-        priority: 1
-      }
-    );
+    const success = await publishSettlementMessage(settlementData);
     
-    await channel.close();
-    await connection.close();
+    if (success) {
+      console.log('✅ Settlement message đã được gửi thành công');
+    } else {
+      console.log('❌ Không thể gửi settlement message');
+    }
     
     return success;
   } catch (error) {

@@ -32,7 +32,7 @@ export default function TradeLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="min-h-screen bg-white">
-      <div className="p-4 md:p-8">
+      <div className="p-0 md:p-8">
         {children}
       </div>
     </div>

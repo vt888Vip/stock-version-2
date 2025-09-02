@@ -9,7 +9,7 @@ export interface TradeHistoryRecord {
   sessionId: string;
   direction: "UP" | "DOWN";
   amount: number;
-  status: "success" | "completed" | "pending";
+  status: "success" | "completed" | "pending" | "queued";
   result: "win" | "lose" | null;
   profit: number;
   createdAt: string;

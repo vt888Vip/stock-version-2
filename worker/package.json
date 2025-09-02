@@ -12,7 +12,8 @@
   "dependencies": {
     "amqplib": "^0.10.9",
     "mongodb": "^6.3.0",
-    "mongoose": "^8.18.0"
+    "mongoose": "^8.18.0",
+    "node-fetch": "^2.7.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

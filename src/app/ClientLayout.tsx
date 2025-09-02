@@ -3,6 +3,7 @@
 import React from 'react';
 import { AuthProvider } from '@/lib/useAuth';
 import { Toaster } from '@/components/ui/toaster';
+import { SocketProvider } from '@/contexts/SocketContext';
 
 // Đảm bảo React được khai báo trong phạm vi toàn cục
 declare global {
@@ -47,8 +48,10 @@ export default function ClientLayout({
 
   return (
     <AuthProvider>
-      {children}
-      <Toaster />
+      <SocketProvider>
+        {children}
+        <Toaster />
+      </SocketProvider>
     </AuthProvider>
   );
 }

@@ -35,8 +35,6 @@ export const API_CONFIG = {
     // Trades
     TRADES: {
       BASE: '/api/trades',
-      PLACE: '/api/trades/place',
-      CHECK_RESULTS: '/api/trades/check-results',
       BY_ID: (id: string) => `/api/trades/${id}`,
     },
     

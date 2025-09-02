@@ -1,196 +1,271 @@
-import { getMongoDb } from '@/lib/db';
-import { ObjectId } from 'mongodb';
-import { processTradeOrder } from '@/lib/rabbitmq';
-import { placeTrade } from '@/lib/balanceUtils';
+import { Trade } from '../models/Trade';
+import { TradeLock } from '../models/TradeLock';
+import { releaseUserLock, releaseTradeLock } from './atomicTradeUtils';
+import { rabbitMQManager, RABBITMQ_CONFIG, publishTradeResult } from './rabbitmq';
 
-/**
- * Worker để xử lý lệnh đặt từ RabbitMQ queue
- */
-export async function startTradeWorker(): Promise<void> {
-  console.log('🚀 Khởi động Trade Worker...');
+// Trade processing worker
+export class TradeWorker {
+  private isRunning = false;
 
-  await processTradeOrder(async (orderData) => {
+  // Start trade processing worker
+  async start(): Promise<void> {
+    if (this.isRunning) {
+      console.log('Trade worker is already running');
+      return;
+    }
+
     try {
-      console.log(`🔄 Xử lý lệnh: ${orderData.id}`);
+      console.log('Starting trade worker...');
       
-      const db = await getMongoDb();
-      if (!db) {
-        throw new Error('Database connection failed');
+      // Sử dụng connection có sẵn từ RabbitMQ Manager
+      if (!rabbitMQManager.isConnectionActive()) {
+        await rabbitMQManager.connect();
       }
-
-      const { sessionId, userId, direction, amount } = orderData;
-
-      // 1. Kiểm tra phiên giao dịch
-      const tradingSession = await db.collection('trading_sessions').findOne({ sessionId });
       
-      if (!tradingSession) {
-        return {
-          success: false,
-          error: 'Trading session not found'
-        };
+      // Start consuming trade processing queue
+      await this.startTradeProcessingConsumer();
+      
+      // Start consuming trade settlement queue
+      await this.startTradeSettlementConsumer();
+      
+      this.isRunning = true;
+      console.log('Trade worker started successfully');
+      
+    } catch (error) {
+      console.error('Failed to start trade worker:', error);
+      throw error;
+    }
+  }
+
+  // Stop trade processing worker
+  async stop(): Promise<void> {
+    if (!this.isRunning) {
+      console.log('Trade worker is not running');
+      return;
+    }
+
+    try {
+      console.log('Stopping trade worker...');
+      
+      // Close RabbitMQ connection
+      await rabbitMQManager.close();
+      
+      this.isRunning = false;
+      console.log('Trade worker stopped successfully');
+      
+    } catch (error) {
+      console.error('Error stopping trade worker:', error);
+    }
+  }
+
+  // Start trade processing consumer
+  private async startTradeProcessingConsumer(): Promise<void> {
+    await rabbitMQManager.consumeQueue(
+      RABBITMQ_CONFIG.queues.tradeProcessing,
+      async (message) => {
+        await this.processTrade(message);
+      },
+      {
+        prefetch: 1 // Process one message at a time
       }
+    );
+  }
 
-      if (tradingSession.status !== 'ACTIVE') {
-        return {
-          success: false,
-          error: 'Trading session is not active'
-        };
+  // Start trade settlement consumer
+  private async startTradeSettlementConsumer(): Promise<void> {
+    await rabbitMQManager.consumeQueue(
+      RABBITMQ_CONFIG.queues.tradeSettlement,
+      async (message) => {
+        await this.processSettlement(message);
+      },
+      {
+        prefetch: 1
       }
+    );
+  }
 
-      if (tradingSession.endTime <= new Date()) {
-        return {
-          success: false,
-          error: 'Trading session has ended'
-        };
+  // Process trade message
+  private async processTrade(message: any): Promise<void> {
+    const { tradeId, userId, sessionId, amount, type } = message.data;
+    
+    try {
+      console.log(`Processing trade: ${tradeId}`);
+      
+      // 1. Check if trade is already processed
+      const trade = await Trade.findOne({ tradeId });
+      if (!trade) {
+        throw new Error(`Trade not found: ${tradeId}`);
       }
-
-      // 2. Kiểm tra balance
-      const userData = await db.collection('users').findOne(
-        { _id: new ObjectId(userId) },
-        { projection: { balance: 1 } }
-      );
-
-      if (!userData) {
-        return {
-          success: false,
-          error: 'User not found'
-        };
+      
+      if (trade.status === 'completed' || trade.status === 'failed') {
+        console.log(`Trade already processed: ${tradeId} with status: ${trade.status}`);
+        return;
       }
-
-      const userBalance = userData.balance || { available: 0, frozen: 0 };
-      const availableBalance = typeof userBalance === 'number' ? userBalance : userBalance.available || 0;
-
-      if (availableBalance < amount) {
-        return {
-          success: false,
-          error: 'Insufficient balance'
-        };
-      }
-
-      // 3. Kiểm tra số lệnh đã đặt trong phiên này
-      const userTradesInSession = await db.collection('trades').countDocuments({
-        sessionId,
-        userId: new ObjectId(userId),
-        status: 'pending'
+      
+      // 2. Check lock validity
+      const lock = await TradeLock.findOne({ 
+        tradeId, 
+        status: 'active',
+        lockExpiry: { $gt: new Date() }
       });
-
-      const MAX_TRADES_PER_SESSION = 5;
-      if (userTradesInSession >= MAX_TRADES_PER_SESSION) {
-        return {
-          success: false,
-          error: `Bạn đã đặt tối đa ${MAX_TRADES_PER_SESSION} lệnh cho phiên này`
-        };
+      
+      if (!lock) {
+        throw new Error(`Trade lock expired or invalid: ${tradeId}`);
       }
-
-      // 4. Xử lý lệnh với atomic operations
-      try {
-        // Trừ balance với atomic operation
-        const balanceUpdateResult = await db.collection('users').updateOne(
-          { 
-            _id: new ObjectId(userId),
-            'balance.available': { $gte: amount }
-          },
-          {
-            $inc: {
-              'balance.available': -amount,
-              'balance.frozen': amount
-            },
-            $set: { updatedAt: new Date() }
+      
+      // 3. Update trade status to processing
+      await Trade.updateOne(
+        { tradeId },
+        { $set: { status: 'processing' } }
+      );
+      
+      // 4. Process trade (simulate trading logic)
+      const result = await this.executeTrade(tradeId, amount, type);
+      
+      // 5. Update trade with result
+      await Trade.updateOne(
+        { tradeId },
+        {
+          $set: {
+            status: 'completed',
+            processedAt: new Date(),
+            result: result
           }
-        );
-
-        if (balanceUpdateResult.modifiedCount === 0) {
-          return {
-            success: false,
-            error: 'Insufficient balance or user not found'
-          };
         }
-
-        // Tạo lệnh giao dịch
-        const trade = {
-          sessionId,
-          userId: new ObjectId(userId),
-          direction,
-          amount: Number(amount),
-          status: 'pending',
-          appliedToBalance: false, // ✅ THÊM FIELD NÀY
-          createdAt: new Date(),
-          updatedAt: new Date()
-        };
-
-        const tradeResult = await db.collection('trades').insertOne(trade);
-        
-        if (!tradeResult.insertedId) {
-          // Nếu tạo trade thất bại, hoàn lại balance
-          await db.collection('users').updateOne(
-            { _id: new ObjectId(userId) },
-            {
-              $inc: {
-                'balance.available': amount,
-                'balance.frozen': -amount
-              },
-              $set: { updatedAt: new Date() }
-            }
-          );
-          throw new Error('Failed to create trade');
-        }
-
-        console.log(`✅ [WORKER] Xử lý lệnh thành công: ${orderData.id}`);
-
-        // Lấy lại lệnh vừa tạo để trả về
-        const insertedTrade = await db.collection('trades').findOne({
-          _id: tradeResult.insertedId
-        });
-
-        return {
-          success: true,
-          result: {
-            trade: {
-              ...insertedTrade,
-              _id: insertedTrade._id.toString(),
-              userId: insertedTrade.userId.toString()
-            }
-          }
-        };
-
-      } catch (error) {
-        console.error(`❌ [WORKER] Lỗi xử lý lệnh ${orderData.id}:`, error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        };
-      }
-
+      );
+      
+      // 6. Release locks
+      await releaseTradeLock(tradeId);
+      await releaseUserLock(userId);
+      
+      // 7. Publish trade result to exchange
+      await publishTradeResult({
+        tradeId,
+        userId,
+        sessionId,
+        result,
+        timestamp: new Date().toISOString()
+      });
+      
+      console.log(`Trade completed successfully: ${tradeId}, Result: ${result.win ? 'WIN' : 'LOSE'}`);
+      
     } catch (error) {
-      console.error(`❌ [WORKER] Lỗi xử lý lệnh ${orderData.id}:`, error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
+      console.error(`Trade processing failed: ${tradeId}`, error);
+      
+      // Update trade status to failed
+      await Trade.updateOne(
+        { tradeId },
+        { 
+          $set: { 
+            status: 'failed',
+            errorMessage: error instanceof Error ? error.message : 'Unknown error'
+          }
+        }
+      );
+      
+      // Release locks on failure
+      await releaseTradeLock(tradeId);
+      await releaseUserLock(userId);
+      
+      throw error;
     }
-  });
+  }
 
-  console.log('✅ Trade Worker đã sẵn sàng xử lý lệnh');
-}
-
-/**
- * Khởi động worker khi ứng dụng start
- */
-export function initializeTradeWorker(): void {
-  // Khởi động worker sau 2 giây để đảm bảo app đã sẵn sàng
-  setTimeout(async () => {
+  // Process settlement message
+  private async processSettlement(message: any): Promise<void> {
+    const { tradeId, userId, result } = message.data;
+    
     try {
-      await startTradeWorker();
+      console.log(`Processing settlement for trade: ${tradeId}`);
+      
+      // Update user balance based on trade result
+      await this.settleTrade(userId, result);
+      
+      console.log(`Settlement completed for trade: ${tradeId}`);
+      
     } catch (error) {
-      console.error('❌ Lỗi khởi động Trade Worker:', error);
-      // Thử lại sau 5 giây
-      setTimeout(async () => {
-        try {
-          await startTradeWorker();
-        } catch (retryError) {
-          console.error('❌ Lỗi khởi động Trade Worker lần 2:', retryError);
-        }
-      }, 5000);
+      console.error(`Settlement failed for trade: ${tradeId}`, error);
+      throw error;
     }
-  }, 2000);
+  }
+
+  // Execute trade (simulate trading logic)
+  private async executeTrade(tradeId: string, amount: number, type: 'buy' | 'sell'): Promise<any> {
+    // Simulate processing time
+    await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+    
+    // Simulate random result (replace with actual trading logic)
+    const isWin = Math.random() > 0.5;
+    const multiplier = isWin ? 1.8 + Math.random() * 0.4 : 0;
+    const profit = isWin ? amount * multiplier - amount : -amount;
+    
+    return {
+      win: isWin,
+      profit,
+      multiplier,
+      type
+    };
+  }
+
+  // Settle trade (update user balance)
+  private async settleTrade(userId: string, result: any): Promise<void> {
+    const { win, profit } = result;
+    
+    // Update user balance
+    const updateData: any = {
+      $inc: {
+        'balance.frozen': -result.amount // Unfreeze the amount
+      },
+      $set: {
+        isLocked: false,
+        lockExpiry: null
+      }
+    };
+    
+    if (win) {
+      // Add profit to available balance
+      updateData.$inc['balance.available'] = result.amount + profit;
+    } else {
+      // Loss: amount is already deducted from frozen
+      updateData.$inc['balance.available'] = 0;
+    }
+    
+    await import('../models/User').then(({ default: UserModel }) => {
+      return UserModel.updateOne(
+        { _id: userId },
+        updateData
+      );
+    });
+  }
+
+  // Get worker status
+  getStatus(): any {
+    return {
+      isRunning: this.isRunning,
+      rabbitMQConnected: rabbitMQManager.isConnectionActive()
+    };
+  }
 }
+
+// Export singleton instance
+export const tradeWorker = new TradeWorker();
+
+// Initialize trade worker
+export const initializeTradeWorker = async (): Promise<void> => {
+  try {
+    await tradeWorker.start();
+  } catch (error) {
+    console.error('Failed to initialize trade worker:', error);
+    throw error;
+  }
+};
+
+// Stop trade worker
+export const stopTradeWorker = async (): Promise<void> => {
+  try {
+    await tradeWorker.stop();
+  } catch (error) {
+    console.error('Failed to stop trade worker:', error);
+    throw error;
+  }
+};

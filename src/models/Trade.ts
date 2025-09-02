@@ -1,80 +1,103 @@
-import mongoose, { Document, Schema } from 'mongoose';
+import mongoose, { Schema, Document } from 'mongoose';
 
 export interface ITrade extends Document {
+  tradeId: string;
+  userId: mongoose.Types.ObjectId;
   sessionId: string;
-  userId: string;
-  direction: 'UP' | 'DOWN';
   amount: number;
-  status: 'pending' | 'completed';
-  result?: 'win' | 'lose';
-  profit?: number;
-  appliedToBalance?: boolean;
-  completedAt?: Date;
+  type: 'buy' | 'sell';
+  direction?: 'UP' | 'DOWN'; // Tương thích với database cũ
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
   createdAt: Date;
-  updatedAt: Date;
+  processedAt?: Date;
+  lockId?: string;
+  retryCount: number;
+  errorMessage?: string;
+  appliedToBalance?: boolean; // Tương thích với database cũ
+  profit?: number; // Tương thích với database cũ
+  result?: {
+    win: boolean;
+    profit: number;
+    multiplier: number;
+  };
 }
 
-const tradeSchema = new Schema<ITrade>({
-  sessionId: { 
-    type: String, 
-    required: true, 
-    index: true 
-  },
-  userId: { 
-    type: String, 
-    required: true, 
-    index: true 
-  },
-  direction: { 
-    type: String, 
-    enum: ['UP', 'DOWN'], 
-    required: true 
-  },
-  amount: { 
-    type: Number, 
+const TradeSchema = new Schema<ITrade>({
+  tradeId: {
+    type: String,
     required: true,
-    min: 0 
+    unique: true,
+    index: true
   },
-  status: { 
-    type: String, 
-    enum: ['pending', 'completed'], 
+  userId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    index: true
+  },
+  sessionId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  amount: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  type: {
+    type: String,
+    enum: ['buy', 'sell'],
+    required: true
+  },
+  direction: {
+    type: String,
+    enum: ['UP', 'DOWN']
+  },
+  status: {
+    type: String,
+    enum: ['pending', 'processing', 'completed', 'failed', 'cancelled'],
     default: 'pending',
-    index: true 
+    index: true
   },
-  result: { 
-    type: String, 
-    enum: ['win', 'lose'],
-    required: false 
+  createdAt: {
+    type: Date,
+    default: Date.now,
+    index: true
   },
-  profit: { 
-    type: Number, 
-    default: 0 
+  processedAt: {
+    type: Date
   },
-  appliedToBalance: { 
-    type: Boolean, 
-    default: false,
-    index: true 
+  lockId: {
+    type: String
   },
-  completedAt: { 
-    type: Date 
+  retryCount: {
+    type: Number,
+    default: 0,
+    max: 5
   },
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
+  errorMessage: {
+    type: String
   },
-  updatedAt: { 
-    type: Date, 
-    default: Date.now 
+  appliedToBalance: {
+    type: Boolean,
+    default: false
+  },
+  profit: {
+    type: Number
+  },
+  result: {
+    win: Boolean,
+    profit: Number,
+    multiplier: Number
   }
 }, {
-  timestamps: true,
+  timestamps: true
 });
 
-// Tạo index cho các trường thường xuyên được query
-tradeSchema.index({ sessionId: 1, userId: 1 });
-tradeSchema.index({ status: 1 });
-tradeSchema.index({ createdAt: -1 });
-tradeSchema.index({ userId: 1, createdAt: -1 });
-tradeSchema.index({ sessionId: 1, appliedToBalance: 1, status: 1 });
+// Indexes for performance
+TradeSchema.index({ userId: 1, sessionId: 1, status: 1 });
+TradeSchema.index({ createdAt: 1, status: 1 });
+TradeSchema.index({ tradeId: 1, status: 1 });
 
-export default mongoose.models.Trade || mongoose.model<ITrade>('Trade', tradeSchema);
+export const Trade = mongoose.models.Trade || mongoose.model<ITrade>('Trade', TradeSchema);

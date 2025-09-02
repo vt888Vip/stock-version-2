@@ -370,7 +370,7 @@ export default function WithdrawPage() {
                </Card>
 
               {/* Thông tin ngân hàng */}
-              <Card className="shadow-xl border-0 bg-white/95 backdrop-blur-sm">
+              {/* <Card className="shadow-xl border-0 bg-white/95 backdrop-blur-sm">
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center gap-2 text-base">
                     <Building2 className="h-4 w-4 text-blue-600" />
@@ -395,7 +395,7 @@ export default function WithdrawPage() {
                      </div>
                    </div>
                 </CardContent>
-              </Card>
+              </Card> */}
              </>
            )}
         </div>

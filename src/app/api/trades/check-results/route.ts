@@ -1,115 +1,251 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { getUserFromRequest } from '@/lib/auth';
 import { getMongoDb } from '@/lib/db';
-import { verifyToken } from '@/lib/auth';
-import TradingSessionModel from '@/models/TradingSession';
+import { publishTradeToQueue } from '@/lib/rabbitmq';
 
-export async function POST(req: Request) {
-  const requestId = `check_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  
+// Types
+interface CheckResultsRequest {
+  sessionId?: string;
+  tradeId?: string;
+  userId?: string;
+}
+
+interface CheckResultsResponse {
+  success: boolean;
+  message?: string;
+  results?: Array<{
+    tradeId: string;
+    sessionId: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    result?: 'win' | 'lose';
+    profit?: number;
+    processedAt?: string;
+  }>;
+  sessionInfo?: {
+    sessionId: string;
+    result: 'UP' | 'DOWN';
+    status: 'ACTIVE' | 'COMPLETED' | 'EXPIRED';
+    totalTrades: number;
+    totalWins: number;
+    totalLosses: number;
+  };
+}
+
+export async function POST(request: NextRequest): Promise<NextResponse<CheckResultsResponse>> {
   try {
-    console.log(`🚀 [${requestId}] Bắt đầu kiểm tra kết quả session`);
-    
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader) {
-      console.log(`❌ [${requestId}] Không có authorization header`);
-      return NextResponse.json({ message: 'Unauthorized' }, { status: 401 });
+    // 1. Authentication check
+    const { userId, isAuthenticated } = await getUserFromRequest(request);
+    if (!isAuthenticated || !userId) {
+      return NextResponse.json(
+        { success: false, message: 'Unauthorized' },
+        { status: 401 }
+      );
     }
 
-    const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
-    const user = await verifyToken(token);
-    
-    if (!user?.userId) {
-      console.log(`❌ [${requestId}] Token không hợp lệ`);
-      return NextResponse.json({ message: 'Invalid token' }, { status: 401 });
+    // 2. Parse request body
+    const body: CheckResultsRequest = await request.json();
+    const { sessionId, tradeId } = body;
+
+    if (!sessionId && !tradeId) {
+      return NextResponse.json(
+        { success: false, message: 'SessionId or tradeId is required' },
+        { status: 400 }
+      );
     }
 
-    const { sessionId } = await req.json();
-    if (!sessionId) {
-      console.log(`❌ [${requestId}] Thiếu sessionId`);
-      return NextResponse.json({ message: 'Session ID is required' }, { status: 400 });
-    }
-
-    console.log(`📥 [${requestId}] Input data:`, { 
-      sessionId, 
-      userId: user.userId,
-      timestamp: new Date().toISOString()
+    console.log('🔍 [CHECK-RESULTS] Bắt đầu kiểm tra kết quả:', {
+      userId,
+      sessionId,
+      tradeId
     });
 
-    console.log(`🔌 [${requestId}] Đang kết nối database...`);
+    // 3. Connect to database
     const db = await getMongoDb();
-    console.log(`✅ [${requestId}] Kết nối database thành công`);
-    
-    // ✅ BƯỚC 1: KIỂM TRA SESSION
-    console.log(`🔍 [${requestId}] Kiểm tra session: ${sessionId}`);
-    const tradingSession = await TradingSessionModel.findOne(
-      { sessionId },
-      { sessionId: 1, status: 1, result: 1, processingComplete: 1, endTime: 1, _id: 0 }
-    ).lean();
-    
-    if (!tradingSession) {
-      console.log(`❌ [${requestId}] Không tìm thấy session: ${sessionId}`);
-      return NextResponse.json({ 
-        hasResult: false, 
-        message: 'Session not found',
-        shouldRetry: true 
-      });
+    if (!db) {
+      return NextResponse.json(
+        { success: false, message: 'Database connection failed' },
+        { status: 500 }
+      );
     }
-    
-    console.log(`📋 [${requestId}] Session info:`, {
-      sessionId: tradingSession.sessionId,
-      status: tradingSession.status,
-      result: tradingSession.result,
-      processingComplete: tradingSession.processingComplete,
-      endTime: tradingSession.endTime
-    });
-    
-    // ✅ BƯỚC 2: KIỂM TRA PHIÊN ĐÃ KẾT THÚC CHƯA
-    const now = new Date();
-    const sessionEnded = tradingSession.endTime && tradingSession.endTime <= now;
-    
-    console.log(`⏰ [${requestId}] Session ended:`, {
-      sessionEnded,
-      endTime: tradingSession.endTime,
-      currentTime: now
-    });
-    
-    // ✅ BƯỚC 3: TRẢ VỀ KẾT QUẢ CÓ SẴN NGAY KHI PHIÊN KẾT THÚC
-    if (sessionEnded && tradingSession.result) {
-      console.log(`✅ [${requestId}] Phiên đã kết thúc, trả về kết quả có sẵn: ${tradingSession.result}`);
-      return NextResponse.json({
-        hasResult: true,
-        result: tradingSession.result,
-        sessionStatus: tradingSession.status,
-        message: 'Kết quả có sẵn từ session'
-      });
+
+    // 4. Check session info
+    let sessionInfo = null;
+    if (sessionId) {
+      const sessionDoc = await db.collection('trading_sessions').findOne(
+        { sessionId },
+        { 
+          projection: {
+            sessionId: 1,
+            result: 1,
+            status: 1,
+            totalTrades: 1,
+            totalWins: 1,
+            totalLosses: 1
+          }
+        }
+      );
+
+      if (sessionDoc) {
+        sessionInfo = {
+          sessionId: sessionDoc.sessionId as string,
+          result: sessionDoc.result as 'UP' | 'DOWN',
+          status: sessionDoc.status as 'ACTIVE' | 'COMPLETED' | 'EXPIRED',
+          totalTrades: sessionDoc.totalTrades || 0,
+          totalWins: sessionDoc.totalWins || 0,
+          totalLosses: sessionDoc.totalLosses || 0
+        };
+      }
     }
+
+    // 5. Check trades
+    const query: any = { userId: new (await import('mongodb')).ObjectId(userId) };
     
-    // ✅ BƯỚC 4: NẾU PHIÊN CHƯA KẾT THÚC, TRẢ VỀ CHƯA CÓ KẾT QUẢ
-    if (!sessionEnded) {
-      console.log(`⏳ [${requestId}] Session chưa kết thúc, chưa có kết quả`);
-      return NextResponse.json({
-        hasResult: false,
-        message: 'Session chưa kết thúc',
-        shouldRetry: true,
-        sessionEnded: false
-      });
+    if (tradeId) {
+      query.tradeId = tradeId;
+    } else if (sessionId) {
+      query.sessionId = sessionId;
     }
+
+    const trades = await db.collection('trades').find(query, {
+      projection: {
+        tradeId: 1,
+        sessionId: 1,
+        status: 1,
+        result: 1,
+        profit: 1,
+        processedAt: 1,
+        createdAt: 1,
+        amount: 1,
+        type: 1,
+        direction: 1
+      },
+      sort: { createdAt: -1 }
+    }).toArray();
+
+    // 6. Process results
+    const results = trades.map(trade => ({
+      tradeId: trade.tradeId as string,
+      sessionId: trade.sessionId as string,
+      status: trade.status as 'pending' | 'processing' | 'completed' | 'failed',
+      result: trade.result?.isWin ? 'win' as const : trade.result?.isWin === false ? 'lose' as const : undefined,
+      profit: trade.result?.profit || trade.profit,
+      processedAt: trade.processedAt || trade.result?.processedAt,
+      amount: trade.amount,
+      type: trade.type,
+      direction: trade.direction || (trade.type === 'buy' ? 'UP' : 'DOWN')
+    }));
+
+    // 7. Gửi tất cả trades vào queue để xử lý kết quả an toàn
+    console.log(`📊 [CHECK-RESULTS] Tổng số trades: ${trades.length}`);
     
-    // ✅ BƯỚC 5: NẾU PHIÊN ĐÃ KẾT THÚC NHƯNG KHÔNG CÓ KẾT QUẢ
-    console.log(`❌ [${requestId}] Session đã kết thúc nhưng không có kết quả`);
-    return NextResponse.json({
-      hasResult: false,
-      message: 'Session đã kết thúc nhưng không có kết quả',
-      shouldRetry: false,
-      error: 'MISSING_RESULT'
-    });
+    // Gửi message cho tất cả trades (dù đã completed hay chưa)
+    for (const trade of trades) {
+      try {
+        const queueData = {
+          tradeId: trade.tradeId,
+          userId: userId,
+          sessionId: trade.sessionId,
+          amount: trade.amount,
+          type: trade.type,
+          action: 'check-result'
+        };
+
+        // Auto-initialize RabbitMQ connection
+        const { initializeRabbitMQ } = await import('@/lib/rabbitmq-auto-init');
+        await initializeRabbitMQ();
+        
+        console.log(`🧪 [CHECK-RESULTS] Gửi message cho trade: ${trade.tradeId} (status: ${trade.status})`);
+
+        const published = await publishTradeToQueue(queueData);
+        
+        if (published) {
+          console.log(`✅ [CHECK-RESULTS] Đã gửi trade ${trade.tradeId} vào queue để xử lý`);
+        } else {
+          console.log(`❌ [CHECK-RESULTS] Không thể gửi trade ${trade.tradeId} vào queue`);
+        }
+      } catch (error) {
+        console.error(`❌ [CHECK-RESULTS] Lỗi gửi trade ${trade.tradeId} vào queue:`, error);
+      }
+    }
+
+    // 8. Worker đã gửi Socket.IO events rồi, không cần gửi lại
+    // Worker sẽ gửi: trade:completed, balance:updated, trade:history:updated
+    console.log(`📡 [CHECK-RESULTS] Worker đã gửi Socket.IO events cho ${results.filter(r => r.status === 'completed').length} trades hoàn thành`);
+
+    // 9. Return response
+    const response: CheckResultsResponse = {
+      success: true,
+      results,
+      sessionInfo: sessionInfo || undefined
+    };
+
+    console.log(`✅ [CHECK-RESULTS] Hoàn thành kiểm tra: ${results.length} trades`);
+    console.log(`📡 [CHECK-RESULTS] Đã gửi Socket.IO events cho ${results.filter(r => r.status === 'completed').length} trades hoàn thành`);
+
+    return NextResponse.json(response);
 
   } catch (error) {
-    console.error(`❌ [${requestId}] Error in check-results:`, error);
-    return NextResponse.json({ 
-      message: 'Internal server error',
-      error: error instanceof Error ? error.message : 'Unknown error',
-      shouldRetry: true
-    }, { status: 500 });
+    console.error('❌ [CHECK-RESULTS] Lỗi:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        message: 'Internal server error',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    );
+  }
+}
+
+// GET method for backward compatibility
+export async function GET(request: NextRequest): Promise<NextResponse<CheckResultsResponse>> {
+  try {
+    // 1. Authentication check
+    const { userId, isAuthenticated } = await getUserFromRequest(request);
+    if (!isAuthenticated || !userId) {
+      return NextResponse.json(
+        { success: false, message: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
+
+    // 2. Get query parameters
+    const { searchParams } = new URL(request.url);
+    const sessionId = searchParams.get('sessionId');
+    const tradeId = searchParams.get('tradeId');
+
+    if (!sessionId && !tradeId) {
+      return NextResponse.json(
+        { success: false, message: 'SessionId or tradeId is required' },
+        { status: 400 }
+      );
+    }
+
+    // 3. Create POST request body
+    const body: CheckResultsRequest = {
+      sessionId: sessionId || undefined,
+      tradeId: tradeId || undefined
+    };
+
+    // 4. Create a mock request for POST method
+    const mockRequest = new NextRequest(request.url, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      headers: request.headers
+    });
+
+    // 5. Call POST method
+    return await POST(mockRequest);
+
+  } catch (error) {
+    console.error('❌ [CHECK-RESULTS] GET method error:', error);
+    return NextResponse.json(
+      { 
+        success: false, 
+        message: 'Internal server error',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      },
+      { status: 500 }
+    );
   }
 }

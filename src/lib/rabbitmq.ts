@@ -1,345 +1,473 @@
-import amqp, { Channel, Connection } from 'amqplib';
+import amqp, { Channel, Connection, Message } from 'amqplib';
 
-// Cấu hình RabbitMQ
-const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://localhost:5672';
-const TRADE_QUEUE = 'orders';
-const SETTLEMENT_QUEUE = 'settlements';
-const TRADE_RESULT_QUEUE = 'trade_results';
+// RabbitMQ Configuration - Local Open Source
+export const RABBITMQ_CONFIG = {
+  url: process.env.RABBITMQ_URL || 'amqp://trading_user:trading_password@localhost:5672',
+  username: process.env.RABBITMQ_USERNAME || 'trading_user',
+  password: process.env.RABBITMQ_PASSWORD || 'trading_password',
+  vhost: process.env.RABBITMQ_VHOST || '/',
+  host: process.env.RABBITMQ_HOST || 'localhost',
+  port: parseInt(process.env.RABBITMQ_PORT || '5672'),
+  tlsPort: parseInt(process.env.RABBITMQ_TLS_PORT || '5672'),
+  queues: {
+    tradeProcessing: process.env.RABBITMQ_QUEUE_TRADE_PROCESSING || 'trade-processing',
+    tradeSettlement: process.env.RABBITMQ_QUEUE_TRADE_SETTLEMENT || 'trade-settlement',
+    tradeResults: process.env.RABBITMQ_QUEUE_TRADE_RESULTS || 'trade-results',
+    settlements: process.env.RABBITMQ_QUEUE_SETTLEMENTS || 'settlements'
+  },
+  exchanges: {
+    tradeEvents: process.env.RABBITMQ_EXCHANGE_TRADE_EVENTS || 'trade-events'
+  },
+  retryAttempts: parseInt(process.env.RABBITMQ_RETRY_ATTEMPTS || '3'),
+  backoffDelay: parseInt(process.env.RABBITMQ_BACKOFF_DELAY || '5000'), // 5 seconds
+  lockTimeout: parseInt(process.env.RABBITMQ_LOCK_TIMEOUT || '30000'), // 30 seconds
+  cleanupInterval: parseInt(process.env.RABBITMQ_CLEANUP_INTERVAL || '60000') // 1 minute
+};
 
-let connection: Connection | null = null;
-let channel: Channel | null = null;
+// Connection manager
+class RabbitMQManager {
+  private connection: Connection | null = null;
+  private channel: Channel | null = null;
+  private isConnected = false;
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
 
-/**
- * Kết nối đến RabbitMQ
- */
-export async function connectRabbitMQ(): Promise<{ connection: Connection; channel: Channel }> {
-  try {
-    if (!connection) {
-      console.log('🔌 Kết nối RabbitMQ...');
-      connection = await amqp.connect(RABBITMQ_URL);
+
+  // Singleton pattern
+  private static instance: RabbitMQManager;
+  
+  public static getInstance(): RabbitMQManager {
+    if (!RabbitMQManager.instance) {
+      RabbitMQManager.instance = new RabbitMQManager();
+    }
+    return RabbitMQManager.instance;
+  }
+
+  // Connect to RabbitMQ
+  async connect(): Promise<void> {
+    // SỬA: Kiểm tra nghiêm ngặt hơn để tránh connection leak
+    if (this.isConnected && this.connection && this.channel) {
+      console.log('✅ RabbitMQ already connected - reusing existing connection');
+      return;
+    }
+
+    // SỬA: Nếu đang trong quá trình kết nối, đợi
+    if (this.connection && !this.isConnected) {
+      console.log('⏳ RabbitMQ connection in progress - waiting...');
+      // Đợi một chút để connection hoàn thành
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      if (this.isConnected && this.channel) {
+        console.log('✅ RabbitMQ connection completed while waiting');
+        return;
+      }
+    }
+
+    try {
+      console.log('🔄 Creating new RabbitMQ connection...');
       
-      connection.on('error', (error) => {
-        console.error('❌ RabbitMQ connection error:', error);
-        connection = null;
-        channel = null;
-      });
-
-      connection.on('close', () => {
+      // Use the full URL from environment
+      this.connection = await amqp.connect(RABBITMQ_CONFIG.url);
+      this.channel = await this.connection!.createChannel();
+      
+      // Setup queues and exchanges
+      await this.setupQueues();
+      await this.setupExchanges();
+      
+      this.isConnected = true;
+      this.reconnectAttempts = 0;
+      
+      console.log('✅ RabbitMQ connected successfully');
+      console.log(`📍 Connected to: ${RABBITMQ_CONFIG.host}:${RABBITMQ_CONFIG.port}`);
+      
+      // Handle connection events - chỉ reconnect khi bị lỗi
+      this.connection!.on('close', () => {
         console.log('🔌 RabbitMQ connection closed');
-        connection = null;
-        channel = null;
+        this.isConnected = false;
+        this.channel = null;
+        this.handleReconnect();
       });
-    }
-
-    if (!channel) {
-      channel = await connection.createChannel();
       
-      // Tạo queue cho lệnh đặt
-      await channel.assertQueue(TRADE_QUEUE, {
-        durable: true, // Queue sẽ được lưu trữ khi restart
-        maxPriority: 10 // Hỗ trợ priority
+      this.connection!.on('error', (error) => {
+        console.error('❌ RabbitMQ connection error:', error);
+        this.isConnected = false;
+        this.channel = null;
+        this.handleReconnect();
       });
-
-      // Tạo queue cho settlement
-      await channel.assertQueue(SETTLEMENT_QUEUE, {
-        durable: true, // Queue sẽ được lưu trữ khi restart
-        maxPriority: 10 // Hỗ trợ priority
-      });
-
-      // Tạo queue cho kết quả
-      await channel.assertQueue(TRADE_RESULT_QUEUE, {
-        durable: true
-      });
-
-      console.log('✅ RabbitMQ connected và queues đã được tạo');
+      
+    } catch (error) {
+      console.error('❌ Failed to connect to RabbitMQ:', error);
+      console.error('🔗 Connection URL:', RABBITMQ_CONFIG.url);
+      this.isConnected = false;
+      this.channel = null;
+      this.handleReconnect();
     }
-
-    return { connection, channel };
-  } catch (error) {
-    console.error('❌ Lỗi kết nối RabbitMQ:', error);
-    throw error;
   }
-}
 
-/**
- * Gửi lệnh đặt vào queue
- */
-export async function sendTradeOrder(orderData: {
-  sessionId: string;
-  userId: string;
-  direction: 'UP' | 'DOWN';
-  amount: number;
-  priority?: number;
-}): Promise<boolean> {
-  try {
-    const { channel } = await connectRabbitMQ();
+  // Setup queues
+  private async setupQueues(): Promise<void> {
+    if (!this.channel) throw new Error('Channel not available');
+
+    // Trade processing queue - để worker tạo
+    console.log('Queue trade-processing sẽ được tạo bởi worker');
     
-    const message = {
-      ...orderData,
-      timestamp: new Date().toISOString(),
-      id: `trade_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    };
 
-    const success = channel.sendToQueue(
-      TRADE_QUEUE,
-      Buffer.from(JSON.stringify(message)),
-      {
-        persistent: true, // Message sẽ được lưu trữ
-        priority: orderData.priority || 0
+    // Trade settlement queue - chỉ assert, không tạo mới
+    await this.channel.assertQueue(RABBITMQ_CONFIG.queues.tradeSettlement, {
+      durable: true
+    });
+
+    // Trade results queue
+    await this.channel.assertQueue(RABBITMQ_CONFIG.queues.tradeResults, {
+      durable: true
+    });
+
+    // Settlements queue
+    await this.channel.assertQueue(RABBITMQ_CONFIG.queues.settlements, {
+      durable: true,
+      arguments: {
+        'x-max-priority': 10
       }
+    });
+
+    console.log('Queues setup completed');
+  }
+
+  // Setup exchanges
+  private async setupExchanges(): Promise<void> {
+    if (!this.channel) throw new Error('Channel not available');
+
+    // Trade events exchange
+    await this.channel.assertExchange(RABBITMQ_CONFIG.exchanges.tradeEvents, 'topic', {
+      durable: true
+    });
+
+    // Bind queues to exchange
+    await this.channel.bindQueue(
+      RABBITMQ_CONFIG.queues.tradeResults,
+      RABBITMQ_CONFIG.exchanges.tradeEvents,
+      'trade.*'
     );
 
-    if (success) {
-      console.log(`📤 Đã gửi lệnh vào queue: ${message.id}`);
-      return true;
-    } else {
-      console.error('❌ Không thể gửi lệnh vào queue');
-      return false;
-    }
-  } catch (error) {
-    console.error('❌ Lỗi gửi lệnh vào queue:', error);
-    return false;
+    console.log('Exchanges setup completed');
   }
-}
 
-/**
- * Gửi settlement vào queue
- */
-export async function sendSettlementOrder(settlementData: {
-  sessionId: string;
-  result: 'UP' | 'DOWN';
-  adminUserId: string;
-  priority?: number;
-}): Promise<boolean> {
-  try {
-    const { channel } = await connectRabbitMQ();
-    
-    const message = {
-      ...settlementData,
-      timestamp: new Date().toISOString(),
-      id: `settlement_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-    };
+  // Handle reconnection
+  private async handleReconnect(): Promise<void> {
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error('Max reconnection attempts reached');
+      return;
+    }
 
-    const success = channel.sendToQueue(
-      SETTLEMENT_QUEUE,
-      Buffer.from(JSON.stringify(message)),
-      {
-        persistent: true, // Message sẽ được lưu trữ
-        priority: settlementData.priority || 0
+    this.reconnectAttempts++;
+    console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
+
+    setTimeout(async () => {
+      try {
+        await this.connect();
+      } catch (error) {
+        console.error('Reconnection failed:', error);
       }
-    );
+    }, 5000 * this.reconnectAttempts); // Exponential backoff
+  }
 
-    if (success) {
-      console.log(`📤 Đã gửi settlement vào queue: ${message.id}`);
-      return true;
-    } else {
-      console.error('❌ Không thể gửi settlement vào queue');
+  // Get channel with auto-connect
+  async getChannel(): Promise<Channel> {
+    // Chỉ tạo connection mới nếu chưa có hoặc đã bị đóng
+    if (!this.isConnected || !this.channel) {
+      console.log('🔄 Auto-connecting to RabbitMQ...');
+      await this.connect();
+    }
+    
+    if (!this.channel) {
+      throw new Error('Failed to get RabbitMQ channel');
+    }
+    
+    return this.channel;
+  }
+
+  // Publish message to queue
+  async publishToQueue(queueName: string, data: any, options: any = {}): Promise<boolean> {
+    try {
+      const channel = await this.getChannel();
+      
+      // Gửi trực tiếp data, không wrap trong message object
+      const result = channel.sendToQueue(
+        queueName,
+        Buffer.from(JSON.stringify(data)),
+        {
+          persistent: true, // Survive broker restart
+          ...options
+        }
+      );
+
+      console.log(`Message published to queue ${queueName}:`, data.tradeId || 'unknown');
+      return result;
+      
+    } catch (error) {
+      console.error(`Failed to publish message to queue ${queueName}:`, error);
       return false;
     }
-  } catch (error) {
-    console.error('❌ Lỗi gửi settlement vào queue:', error);
-    return false;
+  }
+
+  // Publish message to exchange
+  async publishToExchange(exchangeName: string, routingKey: string, data: any, options: any = {}): Promise<boolean> {
+    try {
+      const channel = await this.getChannel();
+      
+      const message = {
+        id: `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        data,
+        timestamp: new Date().toISOString()
+      };
+
+      const result = channel.publish(
+        exchangeName,
+        routingKey,
+        Buffer.from(JSON.stringify(message)),
+        {
+          persistent: true,
+          ...options
+        }
+      );
+
+      console.log(`Message published to exchange ${exchangeName} with routing key ${routingKey}:`, message.id);
+      return result;
+      
+    } catch (error) {
+      console.error(`Failed to publish message to exchange ${exchangeName}:`, error);
+      return false;
+    }
+  }
+
+  // Consume messages from queue
+  async consumeQueue(queueName: string, handler: (message: any) => Promise<void>, options: any = {}): Promise<void> {
+    try {
+      const channel = await this.getChannel();
+      
+      await channel.consume(
+        queueName,
+        async (msg: Message | null) => {
+          if (!msg) return;
+
+          try {
+            const message = JSON.parse(msg.content.toString());
+            console.log(`Processing message from queue ${queueName}:`, message.id);
+            
+            await handler(message);
+            
+            // Acknowledge message
+            channel.ack(msg);
+            console.log(`Message processed successfully:`, message.id);
+            
+                     } catch (error) {
+             console.error(`Error processing message:`, error);
+             
+             // Check if we should retry
+             const parsedMessage = JSON.parse(msg.content.toString());
+             if (parsedMessage.attempts < parsedMessage.maxAttempts) {
+               parsedMessage.attempts++;
+               
+               // Reject and requeue with delay
+               setTimeout(() => {
+                 channel.nack(msg, false, true);
+               }, RABBITMQ_CONFIG.backoffDelay * Math.pow(2, parsedMessage.attempts - 1));
+               
+             } else {
+               // Reject without requeue (send to dead letter queue)
+               channel.nack(msg, false, false);
+               console.error(`Message permanently failed after ${parsedMessage.attempts} attempts:`, parsedMessage.id);
+             }
+           }
+        },
+        {
+          noAck: false, // Manual acknowledgment
+          ...options
+        }
+      );
+
+      console.log(`Consumer started for queue: ${queueName}`);
+      
+    } catch (error) {
+      console.error(`Failed to start consumer for queue ${queueName}:`, error);
+    }
+  }
+
+  // Get queue info
+  async getQueueInfo(queueName: string): Promise<any> {
+    try {
+      const channel = await this.getChannel();
+      const queueInfo = await channel.checkQueue(queueName);
+      return queueInfo;
+    } catch (error) {
+      console.error(`Failed to get queue info for ${queueName}:`, error);
+      return null;
+    }
+  }
+
+  // Close connection
+  async close(): Promise<void> {
+    try {
+      if (this.channel) {
+        await this.channel.close();
+        this.channel = null;
+      }
+      if (this.connection) {
+        await this.connection.close();
+        this.connection = null;
+      }
+      this.isConnected = false;
+      console.log('RabbitMQ connection closed');
+    } catch (error) {
+      console.error('Error closing RabbitMQ connection:', error);
+    }
+  }
+
+  // Check connection status
+  isConnectionActive(): boolean {
+    return this.isConnected && this.connection !== null && this.channel !== null;
   }
 }
 
+// Export singleton instance
+export const rabbitMQManager = RabbitMQManager.getInstance();
+
+// Helper functions
+export const publishTradeToQueue = async (tradeData: any): Promise<boolean> => {
+  return await rabbitMQManager.publishToQueue(
+    RABBITMQ_CONFIG.queues.tradeProcessing,
+    tradeData,
+    {
+      maxAttempts: RABBITMQ_CONFIG.retryAttempts
+    }
+  );
+};
+
+export const publishTradeResult = async (resultData: any): Promise<boolean> => {
+  return await rabbitMQManager.publishToExchange(
+    RABBITMQ_CONFIG.exchanges.tradeEvents,
+    'trade.completed',
+    resultData
+  );
+};
+
+export const publishSettlementMessage = async (settlementData: any): Promise<boolean> => {
+  return await rabbitMQManager.publishToQueue(
+    RABBITMQ_CONFIG.queues.settlements,
+    settlementData,
+    {
+      priority: 1,
+      expiration: 300000 // 5 minutes
+    }
+  );
+};
+
+// Alias functions để tương thích với code cũ
+export const sendTradeOrder = async (tradeData: any): Promise<boolean> => {
+  return await rabbitMQManager.publishToQueue(
+    RABBITMQ_CONFIG.queues.tradeProcessing,
+    {
+      ...tradeData,
+      action: 'place-trade',
+      attempts: 0,
+      maxAttempts: RABBITMQ_CONFIG.retryAttempts,
+      timestamp: new Date().toISOString()
+    },
+    {
+      priority: tradeData.priority || 0,
+      expiration: 300000 // 5 minutes
+    }
+  );
+};
+
+export const sendSettlementOrder = async (settlementData: any): Promise<boolean> => {
+  return await publishSettlementMessage(settlementData);
+};
+
+export const getQueueStats = async (): Promise<any> => {
+  const stats: any = {};
+  
+  for (const [key, queueName] of Object.entries(RABBITMQ_CONFIG.queues)) {
+    const queueInfo = await rabbitMQManager.getQueueInfo(queueName);
+    if (queueInfo) {
+      stats[key] = {
+        name: queueName,
+        messages: queueInfo.messageCount,
+        consumers: queueInfo.consumerCount
+      };
+    }
+  }
+  
+  return stats;
+};
+
 /**
- * Xử lý lệnh đặt từ queue
+ * Đợi kết quả từ worker
  */
-export async function processTradeOrder(
-  callback: (orderData: any) => Promise<{ success: boolean; result?: any; error?: string }>
-): Promise<void> {
-  try {
-    const { channel } = await connectRabbitMQ();
-    
-    console.log('🔄 Bắt đầu xử lý lệnh đặt từ queue...');
-    
-    // Thiết lập prefetch để chỉ xử lý 1 message tại một thời điểm
-    await channel.prefetch(1);
-    
-    channel.consume(TRADE_QUEUE, async (msg) => {
+export async function waitForWorkerResult(tradeIds: string[], timeoutMs: number = 10000): Promise<boolean> {
+  const manager = RabbitMQManager.getInstance();
+  const channel = await manager.getChannel();
+  
+  if (!channel) {
+    throw new Error('RabbitMQ channel not available');
+  }
+
+  return new Promise((resolve, reject) => {
+    const responseQueue = `response_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+    let processedTrades = new Set<string>();
+    let timeout: NodeJS.Timeout;
+
+    // Tạo response queue tạm thời
+    channel.assertQueue(responseQueue, { 
+      durable: false, 
+      autoDelete: true,
+      expires: 60000 // Tự động xóa sau 1 phút
+    });
+
+    // Consumer để nhận kết quả từ worker
+    channel.consume(responseQueue, (msg) => {
       if (!msg) return;
 
       try {
-        const orderData = JSON.parse(msg.content.toString());
-        console.log(`📥 Nhận lệnh từ queue: ${orderData.id}`);
+        const result = JSON.parse(msg.content.toString());
+        console.log(`📥 [RESPONSE] Nhận kết quả từ worker:`, result);
 
-        // Xử lý lệnh
-        const result = await callback(orderData);
-
-        if (result.success) {
-          // Gửi kết quả thành công vào queue kết quả
-          await sendTradeResult({
-            orderId: orderData.id,
-            success: true,
-            result: result.result,
-            timestamp: new Date().toISOString()
-          });
-
-          // Acknowledge message
-          channel.ack(msg);
-          console.log(`✅ Xử lý lệnh thành công: ${orderData.id}`);
-        } else {
-          // Gửi kết quả lỗi vào queue kết quả
-          await sendTradeResult({
-            orderId: orderData.id,
-            success: false,
-            error: result.error,
-            timestamp: new Date().toISOString()
-          });
-
-          // Acknowledge message (không retry để tránh loop vô hạn)
-          channel.ack(msg);
-          console.log(`❌ Xử lý lệnh thất bại: ${orderData.id} - ${result.error}`);
+        if (result.tradeId && result.success) {
+          processedTrades.add(result.tradeId);
+          
+          // Kiểm tra xem tất cả trades đã được xử lý chưa
+          const allProcessed = tradeIds.every(id => processedTrades.has(id));
+          
+          if (allProcessed) {
+            clearTimeout(timeout);
+            channel.ack(msg);
+            channel.deleteQueue(responseQueue);
+            resolve(true);
+          }
         }
-
-      } catch (error) {
-        console.error(`❌ Lỗi xử lý lệnh:`, error);
         
-        // Gửi kết quả lỗi
-        try {
-          const orderData = JSON.parse(msg.content.toString());
-          await sendTradeResult({
-            orderId: orderData.id,
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: new Date().toISOString()
-          });
-        } catch (parseError) {
-          console.error('❌ Lỗi parse message:', parseError);
-        }
-
-        // Acknowledge message để tránh loop
+        channel.ack(msg);
+      } catch (error) {
+        console.error('❌ [RESPONSE] Lỗi xử lý response:', error);
         channel.ack(msg);
       }
     });
 
-  } catch (error) {
-    console.error('❌ Lỗi thiết lập consumer:', error);
-  }
-}
+    // Timeout
+    timeout = setTimeout(() => {
+      console.log(`⏰ [RESPONSE] Timeout đợi worker (${timeoutMs}ms)`);
+      channel.deleteQueue(responseQueue);
+      resolve(false);
+    }, timeoutMs);
 
-/**
- * Gửi kết quả xử lý vào queue kết quả
- */
-export async function sendTradeResult(resultData: {
-  orderId: string;
-  success: boolean;
-  result?: any;
-  error?: string;
-  timestamp: string;
-}): Promise<boolean> {
-  try {
-    const { channel } = await connectRabbitMQ();
-    
-    const success = channel.sendToQueue(
-      TRADE_RESULT_QUEUE,
-      Buffer.from(JSON.stringify(resultData)),
-      { persistent: true }
-    );
-
-    if (success) {
-      console.log(`📤 Đã gửi kết quả vào queue: ${resultData.orderId}`);
-      return true;
-    } else {
-      console.error('❌ Không thể gửi kết quả vào queue');
-      return false;
-    }
-  } catch (error) {
-    console.error('❌ Lỗi gửi kết quả vào queue:', error);
-    return false;
-  }
-}
-
-/**
- * Lấy kết quả xử lý từ queue
- */
-export async function getTradeResult(orderId: string, timeout: number = 30000): Promise<any> {
-  return new Promise(async (resolve, reject) => {
-    try {
-      const { channel } = await connectRabbitMQ();
-      
-      const timeoutId = setTimeout(() => {
-        reject(new Error('Timeout waiting for trade result'));
-      }, timeout);
-
-      const checkResult = async () => {
-        try {
-          const msg = await channel.get(TRADE_RESULT_QUEUE);
-          
-          if (msg) {
-            const result = JSON.parse(msg.content.toString());
-            
-            if (result.orderId === orderId) {
-              clearTimeout(timeoutId);
-              channel.ack(msg);
-              resolve(result);
-              return;
-            } else {
-              // Nếu không phải kết quả cần tìm, đặt lại vào queue
-              channel.nack(msg, false, true);
-            }
-          }
-          
-          // Kiểm tra lại sau 100ms
-          setTimeout(checkResult, 100);
-        } catch (error) {
-          clearTimeout(timeoutId);
-          reject(error);
-        }
+    // Gửi message với response queue
+    tradeIds.forEach(tradeId => {
+      const message = {
+        tradeId,
+        responseQueue,
+        timestamp: Date.now()
       };
-
-      checkResult();
-
-    } catch (error) {
-      reject(error);
-    }
+      
+      channel.sendToQueue('trade-processing', Buffer.from(JSON.stringify(message)));
+    });
   });
-}
-
-/**
- * Đóng kết nối RabbitMQ
- */
-export async function closeRabbitMQ(): Promise<void> {
-  try {
-    if (channel) {
-      await channel.close();
-      channel = null;
-    }
-    if (connection) {
-      await connection.close();
-      connection = null;
-    }
-    console.log('🔌 RabbitMQ connection closed');
-  } catch (error) {
-    console.error('❌ Lỗi đóng RabbitMQ connection:', error);
-  }
-}
-
-/**
- * Lấy thông tin queue
- */
-export async function getQueueInfo(): Promise<{
-  tradeQueue: { messageCount: number; consumerCount: number };
-  resultQueue: { messageCount: number; consumerCount: number };
-}> {
-  try {
-    const { channel } = await connectRabbitMQ();
-    
-    const tradeQueueInfo = await channel.checkQueue(TRADE_QUEUE);
-    const resultQueueInfo = await channel.checkQueue(TRADE_RESULT_QUEUE);
-
-    return {
-      tradeQueue: {
-        messageCount: tradeQueueInfo.messageCount,
-        consumerCount: tradeQueueInfo.consumerCount
-      },
-      resultQueue: {
-        messageCount: resultQueueInfo.messageCount,
-        consumerCount: resultQueueInfo.consumerCount
-      }
-    };
-  } catch (error) {
-    console.error('❌ Lỗi lấy thông tin queue:', error);
-    throw error;
-  }
 }

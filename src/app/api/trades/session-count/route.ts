@@ -28,11 +28,18 @@ export async function GET(req: Request) {
     const currentMinute = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes()));
     const sessionId = `${currentMinute.getUTCFullYear()}${String(currentMinute.getUTCMonth() + 1).padStart(2, '0')}${String(currentMinute.getUTCDate()).padStart(2, '0')}${String(currentMinute.getUTCHours()).padStart(2, '0')}${String(currentMinute.getUTCMinutes()).padStart(2, '0')}`;
 
-    // Đếm số lệnh pending của user trong phiên hiện tại
+    // Đếm số lệnh pending và processing của user trong phiên hiện tại
     const pendingTradesCount = await db.collection('trades').countDocuments({
       sessionId,
       userId: new ObjectId(user.userId),
-      status: 'pending'
+      status: { $in: ['pending', 'processing'] }
+    });
+    
+    // Đếm tổng số lệnh của user trong phiên hiện tại
+    const totalTradesCount = await db.collection('trades').countDocuments({
+      sessionId,
+      userId: new ObjectId(user.userId),
+      status: { $in: ['pending', 'processing', 'completed', 'failed'] }
     });
 
     return NextResponse.json({
@@ -40,6 +47,7 @@ export async function GET(req: Request) {
       data: {
         sessionId,
         pendingTradesCount,
+        totalTradesCount,
         currentTime: now.toISOString()
       }
     });
