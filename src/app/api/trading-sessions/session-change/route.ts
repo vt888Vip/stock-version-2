@@ -35,8 +35,11 @@ async function sendSettlementMessage(settlementData: {
 // API để theo dõi sự thay đổi phiên và tạo phiên mới với kết quả có sẵn
 export async function GET(request: NextRequest) {
   try {
+    console.log('🔄 [SESSION-CHANGE] Bắt đầu xử lý request');
+    
     const db = await getMongoDb();
     if (!db) {
+      console.error('❌ [SESSION-CHANGE] Không thể kết nối database');
       throw new Error('Không thể kết nối cơ sở dữ liệu');
     }
 
@@ -47,11 +50,23 @@ export async function GET(request: NextRequest) {
     // Tạo sessionId cho phiên hiện tại
     const sessionId = `${currentMinute.getUTCFullYear()}${String(currentMinute.getUTCMonth() + 1).padStart(2, '0')}${String(currentMinute.getUTCDate()).padStart(2, '0')}${String(currentMinute.getUTCHours()).padStart(2, '0')}${String(currentMinute.getUTCMinutes()).padStart(2, '0')}`;
 
-    // Lấy phiên hiện tại từ database
-    let currentSession = await TradingSessionModel.findOne({ 
-      sessionId: sessionId,
-      status: { $in: ['ACTIVE', 'COMPLETED'] }
-    }).lean();
+    // Lấy phiên hiện tại từ database với timeout
+    let currentSession;
+    try {
+      currentSession = await Promise.race([
+        TradingSessionModel.findOne({ 
+          sessionId: sessionId,
+          status: { $in: ['ACTIVE', 'COMPLETED'] }
+        }).lean(),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Database timeout')), 5000)
+        )
+      ]) as any;
+    } catch (dbError) {
+      console.error('❌ [SESSION-CHANGE] Database query timeout:', dbError);
+      // Fallback: tạo session mới nếu không thể query database
+      currentSession = null;
+    }
 
     // Kiểm tra xem phiên hiện tại có kết thúc chưa
     const sessionEnded = currentSession && currentSession.endTime <= now;
@@ -127,7 +142,7 @@ export async function GET(request: NextRequest) {
     // Tính thời gian còn lại
     const timeLeft = Math.max(0, Math.floor((nextMinute.getTime() - now.getTime()) / 1000));
 
-    return NextResponse.json({
+    const response = {
       success: true,
       sessionChanged,
       currentSession: {
@@ -139,6 +154,20 @@ export async function GET(request: NextRequest) {
         result: currentSession?.result || null
       },
       serverTime: now.toISOString()
+    };
+
+    console.log('✅ [SESSION-CHANGE] Response:', {
+      sessionId: response.currentSession.sessionId,
+      timeLeft: response.currentSession.timeLeft,
+      sessionChanged: response.sessionChanged
+    });
+
+    return NextResponse.json(response, {
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0'
+      }
     });
 
   } catch (error) {

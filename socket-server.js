@@ -8,8 +8,10 @@ const server = createServer();
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:3000",
-    methods: ["GET", "POST"]
+    origin: ["http://localhost:3000", "http://174.138.24.77:3000", "http://174.138.24.77"],
+    methods: ["GET", "POST"],
+    credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"]
   }
 });
 

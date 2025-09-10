@@ -479,10 +479,23 @@ export default function TradePage() {
     const updateSession = async () => {
       try {
         // ✅ SỬ DỤNG MONITORING: Wrap API call với performance tracking
-        const sessionResponse = await fetch('/api/trading-sessions/session-change');
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 giây timeout
+        
+        const sessionResponse = await fetch('/api/trading-sessions/session-change', {
+          signal: controller.signal,
+          headers: {
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache'
+          }
+        });
+        
+        clearTimeout(timeoutId);
+        
         if (!sessionResponse.ok) {
-          throw new Error('Session update failed');
+          throw new Error(`Session update failed: ${sessionResponse.status} ${sessionResponse.statusText}`);
         }
+        
         const sessionData = await sessionResponse.json();
         
         if (sessionData.success) {
@@ -498,32 +511,80 @@ export default function TradePage() {
               setCurrentSessionId(newSessionId);
               
               // Reset các trạng thái liên quan khi session mới bắt đầu
-                              setTradeResults([]); // ✅ SỬA: Reset trade results khi bắt đầu phiên mới
+              setTradeResults([]); // ✅ SỬA: Reset trade results khi bắt đầu phiên mới
               setTradesInCurrentSession(0); // Reset số lệnh trong phiên mới
-              // console.log('🔄 Phiên mới bắt đầu:', newSessionId);
+              console.log('🔄 Phiên mới bắt đầu:', newSessionId);
             }
             
             setSessionStatus(sessionData.currentSession.status);
           }
       } catch (error) {
-        console.error('Lỗi khi cập nhật phiên:', error);
+        if (error instanceof Error) {
+          if (error.name === 'AbortError') {
+            console.warn('⏰ Session update timeout - có thể do mạng chậm');
+          } else if (error.message.includes('Failed to fetch')) {
+            console.warn('🌐 Lỗi kết nối mạng - kiểm tra kết nối internet');
+          } else {
+            console.error('❌ Lỗi khi cập nhật phiên:', error);
+          }
+        } else {
+          console.error('❌ Lỗi không xác định khi cập nhật phiên:', error);
+        }
+        
+        // ✅ FALLBACK: Sử dụng API backup nếu session-change fail
+        try {
+          const fallbackResponse = await fetch('/api/trading-sessions');
+          if (fallbackResponse.ok) {
+            const fallbackData = await fallbackResponse.json();
+            if (fallbackData.success) {
+              setTimeLeft(fallbackData.currentSession.timeLeft);
+              setCurrentSessionId(fallbackData.currentSession.sessionId);
+              setSessionStatus(fallbackData.currentSession.status);
+              console.log('✅ Sử dụng fallback API thành công');
+            }
+          }
+        } catch (fallbackError) {
+          console.error('❌ Fallback API cũng thất bại:', fallbackError);
+        }
       }
     };
     
     // Update immediately
     updateSession();
     
-    // ✅ MINIMAL POLLING: Chỉ poll khi cần thiết
+    // ✅ SMART POLLING: Tối ưu polling dựa trên trạng thái
     let interval;
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    const smartUpdateSession = async () => {
+      try {
+        await updateSession();
+        retryCount = 0; // Reset retry count khi thành công
+      } catch (error) {
+        retryCount++;
+        if (retryCount >= maxRetries) {
+          console.warn(`⚠️ Đã thử ${maxRetries} lần, tạm dừng polling trong 30 giây`);
+          setTimeout(() => {
+            retryCount = 0;
+            updateSession();
+          }, 30000);
+          return;
+        }
+      }
+    };
+    
     if (timeLeft <= 0) {
-      interval = 2000; // Poll mỗi 2 giây khi timer = 0 (chờ phiên mới)
+      interval = 3000; // Poll mỗi 3 giây khi timer = 0 (chờ phiên mới)
     } else if (timeLeft <= 5) {
-      interval = 2000; // Poll mỗi 2 giây khi gần về 0
+      interval = 5000; // Poll mỗi 5 giây khi gần về 0
+    } else if (timeLeft <= 30) {
+      interval = 10000; // Poll mỗi 10 giây khi còn ít thời gian
     } else {
       interval = 30000; // Poll mỗi 30 giây khi còn nhiều thời gian
     }
     
-    const sessionInterval = setInterval(updateSession, interval);
+    const sessionInterval = setInterval(smartUpdateSession, interval);
     
     return () => clearInterval(sessionInterval);
   }, [currentSessionId, timeLeft, isPlacingTrade]); // ✅ Thêm isPlacingTrade vào dependency

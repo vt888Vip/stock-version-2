@@ -135,11 +135,19 @@ export async function POST(request: NextRequest): Promise<NextResponse<CheckResu
       direction: trade.direction || (trade.type === 'buy' ? 'UP' : 'DOWN')
     }));
 
-    // 7. Gửi tất cả trades vào queue để xử lý kết quả an toàn
+    // 7. Gửi chỉ trades chưa xử lý vào queue để xử lý kết quả an toàn
     console.log(`📊 [CHECK-RESULTS] Tổng số trades: ${trades.length}`);
     
-    // Gửi message cho tất cả trades (dù đã completed hay chưa)
-    for (const trade of trades) {
+    // ✅ SỬA: Chỉ gửi trades chưa completed hoặc chưa appliedToBalance
+    const unsettledTrades = trades.filter(trade => 
+      trade.status === 'pending' || 
+      (trade.status === 'completed' && !trade.appliedToBalance)
+    );
+    
+    console.log(`📊 [CHECK-RESULTS] Trades cần xử lý: ${unsettledTrades.length}`);
+    
+    // Gửi message cho trades chưa xử lý
+    for (const trade of unsettledTrades) {
       try {
         const queueData = {
           tradeId: trade.tradeId,
