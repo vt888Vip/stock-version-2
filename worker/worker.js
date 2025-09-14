@@ -1149,11 +1149,17 @@ async function processSettlement(settlementData) {
   }
 }
 
+// ✅ FIX: Sequence counter để tránh race condition
+let sequenceCounter = 0;
+
 /**
  * Gửi Socket.IO event
  */
 async function sendSocketEvent(userId, event, data) {
   try {
+    // ✅ FIX: Thêm sequence number vào mỗi event
+    const sequence = ++sequenceCounter;
+    
     const response = await fetch(`${SOCKET_SERVER_URL}/emit`, {
       method: 'POST',
       headers: {
@@ -1162,7 +1168,11 @@ async function sendSocketEvent(userId, event, data) {
       body: JSON.stringify({
         userId,
         event,
-        data
+        data: {
+          ...data,
+          sequence,
+          timestamp: new Date().toISOString()
+        }
       })
     });
 
@@ -1171,7 +1181,7 @@ async function sendSocketEvent(userId, event, data) {
     }
 
     const result = await response.json();
-    console.log(`📡 [SOCKET] Event sent: ${event} to user ${userId}`, result);
+    console.log(`📡 [SOCKET] Event sent: ${event} to user ${userId} (seq: ${sequence})`, result);
     return result.success;
   } catch (error) {
     console.error(`❌ [SOCKET] Error sending event ${event}:`, error);

@@ -150,57 +150,50 @@ export default function TradePage() {
   
   // ✅ THÊM: State để kiểm soát polling khi đang đặt lệnh
   const [isPlacingTrade, setIsPlacingTrade] = useState(false);
+  
+  // ✅ FIX: State để track sequence number cho socket events
+  const [lastSequence, setLastSequence] = useState(0);
+
+  // ✅ FIX: Fetch balance từ server thay vì tự tính
+  const fetchBalanceFromServer = async () => {
+    try {
+      const res = await fetch('/api/user/balance', {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        }
+      });
+      const data = await res.json();
+      
+      if (data.success) {
+        setBalance(data.balance.available);
+        setFrozenBalance(data.balance.frozen);
+        console.log('✅ [BALANCE SYNC] Fetched from server:', data.balance);
+      }
+    } catch (error) {
+      console.error('❌ [BALANCE SYNC] Error fetching balance:', error);
+    }
+  };
+
+  // ✅ FIX: Debounce balance updates để tránh fetch quá nhiều
+  const [balanceUpdateTimeout, setBalanceUpdateTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Listen for balance:updated events from Socket.IO
   useEffect(() => {
     const handleBalanceUpdate = (event: CustomEvent) => {
-      const { profit, result, amount, tradeId } = event.detail;
+      const { profit, result, amount, tradeId, sequence } = event.detail;
       console.log('💰 Balance update received from Socket.IO:', event.detail);
       
-      // ✅ DEBUG: Log balance trước và sau khi cập nhật
-      console.log('🔍 [BALANCE UPDATE] Before update:', {
-        currentBalance: balance,
-        currentFrozen: frozenBalance,
-        update: { tradeId, profit, result, amount }
-      });
-      
-      // ✅ DEBUG: Log logic xử lý
-      if (result === 'win') {
-        console.log('🎯 [BALANCE UPDATE] WIN logic: balance + amount + profit, frozen - amount');
-      } else {
-        console.log('🎯 [BALANCE UPDATE] LOSE logic: balance unchanged, frozen - amount');
+      // ✅ FIX: Chỉ xử lý events có sequence mới hơn
+      if (sequence && sequence <= lastSequence) {
+        console.log('⚠️ Ignoring old balance event:', sequence, '<=', lastSequence);
+        return;
       }
       
-      // ✅ SỬA: Tính balance chính xác dựa trên amount và profit
-      if (result === 'win') {
-        // THẮNG: Trả lại tiền gốc + tiền thắng
-        setBalance(prev => {
-          const newBalance = prev + amount + profit;
-          console.log('✅ [BALANCE UPDATE] WIN - New balance:', newBalance, '(+', amount + profit, ')');
-          return newBalance;
-        });
-        setFrozenBalance(prev => {
-          const newFrozen = Math.max(0, prev - amount);
-          console.log('✅ [BALANCE UPDATE] WIN - New frozen:', newFrozen, '(-', amount, ')');
-          return newFrozen;
-        }); // Giảm frozen balance (tiền gốc)
-      } else {
-        // ✅ SỬA: THUA - KHÔNG cộng tiền vào available, chỉ giảm frozen
-        // Khi thua, user mất tiền, không được trả lại
-        setBalance(prev => {
-          // ❌ SAI: prev + amount (cộng tiền gốc)
-          // ✅ ĐÚNG: prev (giữ nguyên balance)
-          console.log('✅ [BALANCE UPDATE] LOSE - Balance unchanged:', prev, '(user lost', amount, ')');
-          return prev; // Giữ nguyên balance, không cộng gì
-        });
-        setFrozenBalance(prev => {
-          const newFrozen = Math.max(0, prev - amount);
-          console.log('✅ [BALANCE UPDATE] LOSE - New frozen:', newFrozen, '(-', amount, ')');
-          return newFrozen;
-        }); // Giảm frozen balance (tiền gốc)
+      if (sequence) {
+        setLastSequence(sequence);
       }
       
-      // ✅ SỬA: Thêm trade result mới vào danh sách
+      // ✅ FIX: Chỉ cập nhật trade results, KHÔNG tự tính balance
       setTradeResults(prev => {
         const newResults = [
           ...prev,
@@ -214,11 +207,25 @@ export default function TradePage() {
         console.log('📊 [TRADE RESULTS] Updated:', newResults);
         return newResults;
       });
+      
+      // ✅ FIX: Debounce fetch balance từ server
+      if (balanceUpdateTimeout) {
+        clearTimeout(balanceUpdateTimeout);
+      }
+      
+      const timeout = setTimeout(() => {
+        fetchBalanceFromServer();
+      }, 500); // Debounce 500ms
+      
+      setBalanceUpdateTimeout(timeout);
     };
 
     const handleTradePlaced = (event: CustomEvent) => {
       const { tradeId, sessionId, direction, amount, type } = event.detail;
       console.log('📊 Trade placed event received from Socket.IO:', event.detail);
+      
+      // ✅ FIX: Fetch balance từ server thay vì tự tính
+      fetchBalanceFromServer();
       
       // Thêm trade mới vào trade history
       const newTradeRecord: TradeHistoryRecord = {
@@ -255,7 +262,10 @@ export default function TradePage() {
       const { tradeId, sessionId, result, profit, amount, direction } = event.detail;
       console.log('🎉 Trade completed event received from Socket.IO:', event.detail);
       
-      // ✅ SỬA: Thêm trade result mới vào danh sách
+      // ✅ FIX: Fetch balance từ server thay vì tự tính
+      fetchBalanceFromServer();
+      
+      // ✅ FIX: Thêm trade result mới vào danh sách
       setTradeResults(prev => [
         ...prev,
         {
@@ -366,6 +376,24 @@ export default function TradePage() {
       window.removeEventListener('trade:completed', handleTradeCompleted as EventListener);
       window.removeEventListener('trade:history:updated', handleTradeHistoryUpdated as EventListener);
     };
+  }, [lastSequence]);
+
+  // ✅ FIX: Reconnection handling - fetch balance khi socket reconnect
+  useEffect(() => {
+    if (socket?.connected) {
+      console.log('🔄 Socket reconnected, fetching balance from server');
+      fetchBalanceFromServer();
+    }
+  }, [socket?.connected]);
+
+  // ✅ FIX: Periodic sync - fetch balance mỗi 30 giây để đảm bảo đồng bộ
+  useEffect(() => {
+    const interval = setInterval(() => {
+      console.log('🔄 Periodic balance sync');
+      fetchBalanceFromServer();
+    }, 30000); // Sync mỗi 30 giây
+    
+    return () => clearInterval(interval);
   }, []);
 
   // Load user balance and current session
