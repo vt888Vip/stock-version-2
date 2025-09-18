@@ -143,7 +143,6 @@ export default function TradePage() {
 
   // Thêm state cho countdown cập nhật sau 12 giây
   const [updateCountdown, setUpdateCountdown] = useState<number | null>(null);
-  const [countdownStarted, setCountdownStarted] = useState(false);
   const [isBalanceLocked, setIsBalanceLocked] = useState(false);
   const [lastBalanceSync, setLastBalanceSync] = useState<number>(0);
   const [tradesInCurrentSession, setTradesInCurrentSession] = useState<number>(0);
@@ -167,7 +166,6 @@ export default function TradePage() {
       if (data.success) {
         setBalance(data.balance.available);
         setFrozenBalance(data.balance.frozen);
-        console.log('✅ [BALANCE SYNC] Fetched from server:', data.balance);
       }
     } catch (error) {
       console.error('❌ [BALANCE SYNC] Error fetching balance:', error);
@@ -181,11 +179,11 @@ export default function TradePage() {
   useEffect(() => {
     const handleBalanceUpdate = (event: CustomEvent) => {
       const { profit, result, amount, tradeId, sequence } = event.detail;
-      console.log('💰 Balance update received from Socket.IO:', event.detail);
+      // console.log('💰 Balance update received from Socket.IO:', event.detail);
       
-      // ✅ FIX: Chỉ xử lý events có sequence mới hơn
-      if (sequence && sequence <= lastSequence) {
-        console.log('⚠️ Ignoring old balance event:', sequence, '<=', lastSequence);
+      // ✅ FIX: Chỉ xử lý events có sequence mới hơn (bỏ qua nếu bằng nhau)
+      if (sequence && sequence < lastSequence) {
+        console.log('⚠️ Ignoring old balance event:', sequence, '<', lastSequence);
         return;
       }
       
@@ -195,17 +193,33 @@ export default function TradePage() {
       
       // ✅ FIX: Chỉ cập nhật trade results, KHÔNG tự tính balance
       setTradeResults(prev => {
-        const newResults = [
-          ...prev,
-          {
+        // ✅ SỬA: Check duplicate trước khi thêm
+        const existingIndex = prev.findIndex(r => r.tradeId === event.detail.tradeId);
+        if (existingIndex >= 0) {
+          // Update existing result
+          const newResults = [...prev];
+          newResults[existingIndex] = {
             tradeId: event.detail.tradeId,
             status: result,
             profit: profit,
             amount: amount
-          }
-        ];
-        console.log('📊 [TRADE RESULTS] Updated:', newResults);
-        return newResults;
+          };
+          // console.log('📊 [TRADE RESULTS] Updated existing:', newResults);
+          return newResults;
+        } else {
+          // Add new result
+          const newResults = [
+            ...prev,
+            {
+              tradeId: event.detail.tradeId,
+              status: result,
+              profit: profit,
+              amount: amount
+            }
+          ];
+          // console.log('📊 [TRADE RESULTS] Added new:', newResults);
+          return newResults;
+        }
       });
       
       // ✅ FIX: Debounce fetch balance từ server
@@ -222,7 +236,7 @@ export default function TradePage() {
 
     const handleTradePlaced = (event: CustomEvent) => {
       const { tradeId, sessionId, direction, amount, type } = event.detail;
-      console.log('📊 Trade placed event received from Socket.IO:', event.detail);
+      // console.log('🔍 [DEBUG] handleTradePlaced called with:', event.detail);
       
       // ✅ FIX: Fetch balance từ server thay vì tự tính
       fetchBalanceFromServer();
@@ -255,12 +269,26 @@ export default function TradePage() {
       });
       
       // Tăng số trades trong session hiện tại
-      setTradesInCurrentSession(prev => prev + 1);
+      setTradesInCurrentSession(prev => {
+        const newValue = prev + 1;
+        // console.log('🔍 [DEBUG] Tăng tradesInCurrentSession:', prev, '→', newValue);
+        return newValue;
+      });
     };
 
     const handleTradeCompleted = (event: CustomEvent) => {
-      const { tradeId, sessionId, result, profit, amount, direction } = event.detail;
-      console.log('🎉 Trade completed event received from Socket.IO:', event.detail);
+      const { tradeId, sessionId, result, profit, amount, direction, sequence } = event.detail;
+      // console.log('🎉 Trade completed event received from Socket.IO:', event.detail);
+      
+      // ✅ FIX: Chỉ xử lý events có sequence mới hơn (bỏ qua nếu bằng nhau)
+      if (sequence && sequence < lastSequence) {
+        console.log('⚠️ Ignoring old trade completed event:', sequence, '<', lastSequence);
+        return;
+      }
+      
+      if (sequence) {
+        setLastSequence(sequence);
+      }
       
       // ✅ FIX: Fetch balance từ server thay vì tự tính
       fetchBalanceFromServer();
@@ -277,12 +305,15 @@ export default function TradePage() {
       ]);
       
       // Giảm số trades trong session hiện tại
-      setTradesInCurrentSession(prev => Math.max(0, prev - 1));
+      setTradesInCurrentSession(prev => {
+        const newValue = Math.max(0, prev - 1);
+        // console.log('🔍 [DEBUG] Giảm tradesInCurrentSession (completed):', prev, '→', newValue);
+        return newValue;
+      });
     };
 
     const handleTradeHistoryUpdated = (event: CustomEvent) => {
       const { action, trade } = event.detail;
-      console.log('📊 Trade history updated event received from Socket.IO:', event.detail);
       
       if (action === 'add') {
         // Thêm trade mới vào trade history
@@ -322,7 +353,7 @@ export default function TradePage() {
             t.id === trade.id
           );
           
-          console.log('🔍 Found trade at index:', existingIndex);
+          // console.log('🔍 Found trade at index:', existingIndex);
           
           if (existingIndex >= 0) {
             const updated = [...prev];
@@ -336,10 +367,10 @@ export default function TradePage() {
               profit: trade.profit,
               createdAt: validateAndFormatDate(trade.createdAt),
             };
-            console.log('✅ Updated trade in history:', updated[existingIndex]);
+            // console.log('✅ Updated trade in history:', updated[existingIndex]);
             return updated;
           } else {
-            console.log('❌ Trade not found in history, adding as new');
+            // console.log('❌ Trade not found in history, adding as new');
             // Nếu không tìm thấy, thêm như trade mới
             const newTradeRecord: TradeHistoryRecord = {
               id: trade.id,
@@ -358,15 +389,52 @@ export default function TradePage() {
         // Giảm số trades trong session hiện tại nếu trade hoàn thành
         if (trade.status === 'completed') {
           setTradesInCurrentSession(prev => Math.max(0, prev - 1));
-          console.log('✅ Trade completed, reduced trades in session');
+          // console.log('✅ Trade completed, reduced trades in session');
         }
       }
+    };
+
+    const handleBatchTradesCompleted = (event: CustomEvent) => {
+      // console.log('🎉 Batch trades completed event received:', event.detail);
+      
+      const { trades, sessionId, totalTrades, totalWins, totalLosses } = event.detail;
+      
+      // Cập nhật trade results cho tất cả trades
+      setTradeResults(prev => {
+        const newResults = [...prev];
+        
+        trades.forEach((trade: any) => {
+          const existingIndex = newResults.findIndex(r => r.tradeId === trade.tradeId);
+          if (existingIndex >= 0) {
+            // Update existing
+            newResults[existingIndex] = {
+              tradeId: trade.tradeId,
+              status: trade.result,
+              profit: trade.profit,
+              amount: trade.amount
+            };
+          } else {
+            // Add new
+            newResults.push({
+              tradeId: trade.tradeId,
+              status: trade.result,
+              profit: trade.profit,
+              amount: trade.amount
+            });
+          }
+        });
+        
+        // console.log('📊 [TRADE RESULTS] Batch updated:', newResults);
+        return newResults;
+      });
+      
     };
 
     // Add event listeners
     window.addEventListener('balance:updated', handleBalanceUpdate as EventListener);
     window.addEventListener('trade:placed', handleTradePlaced as EventListener);
     window.addEventListener('trade:completed', handleTradeCompleted as EventListener);
+    window.addEventListener('trades:batch:completed', handleBatchTradesCompleted as EventListener);
     window.addEventListener('trade:history:updated', handleTradeHistoryUpdated as EventListener);
 
     // Cleanup
@@ -374,6 +442,7 @@ export default function TradePage() {
       window.removeEventListener('balance:updated', handleBalanceUpdate as EventListener);
       window.removeEventListener('trade:placed', handleTradePlaced as EventListener);
       window.removeEventListener('trade:completed', handleTradeCompleted as EventListener);
+      window.removeEventListener('trades:batch:completed', handleBatchTradesCompleted as EventListener);
       window.removeEventListener('trade:history:updated', handleTradeHistoryUpdated as EventListener);
     };
   }, [lastSequence]);
@@ -381,7 +450,7 @@ export default function TradePage() {
   // ✅ FIX: Reconnection handling - fetch balance khi socket reconnect
   useEffect(() => {
     if (socket?.connected) {
-      console.log('🔄 Socket reconnected, fetching balance from server');
+      // console.log('🔄 Socket reconnected, fetching balance from server');
       fetchBalanceFromServer();
     }
   }, [socket?.connected]);
@@ -389,7 +458,7 @@ export default function TradePage() {
   // ✅ FIX: Periodic sync - fetch balance mỗi 30 giây để đảm bảo đồng bộ
   useEffect(() => {
     const interval = setInterval(() => {
-      console.log('🔄 Periodic balance sync');
+      // console.log('🔄 Periodic balance sync');
       fetchBalanceFromServer();
     }, 30000); // Sync mỗi 30 giây
     
@@ -415,7 +484,10 @@ export default function TradePage() {
           if (sessionData.success) {
             currentSessionId = sessionData.currentSession.sessionId;
             setCurrentSessionId(sessionData.currentSession.sessionId);
-            setTimeLeft(sessionData.currentSession.timeLeft);
+            // ✅ SỬA: Chỉ set timeLeft khi load lần đầu, không ghi đè local timer
+            if (timeLeft === SESSION_DURATION) {
+              setTimeLeft(sessionData.currentSession.timeLeft);
+            }
           }
         }
 
@@ -428,7 +500,7 @@ export default function TradePage() {
 
         if (tradeHistoryResponse.ok) {
           const tradeHistoryData = await tradeHistoryResponse.json();
-          console.log('📊 [HISTORY] Response data:', tradeHistoryData);
+          // console.log('📊 [HISTORY] Response data:', tradeHistoryData);
           
           if (tradeHistoryData.trades && tradeHistoryData.trades.length > 0) {
             // Chuyển đổi dữ liệu từ database sang format của component
@@ -531,8 +603,17 @@ export default function TradePage() {
             const newTimeLeft = sessionData.currentSession.timeLeft;
             const sessionChanged = sessionData.sessionChanged;
             
-            // Cập nhật timeLeft
-            setTimeLeft(newTimeLeft);
+            // ✅ UPDATE STATE: Cập nhật state khi có session mới
+            if (sessionChanged || newSessionId !== currentSessionId) {
+              setCurrentSessionId(newSessionId);
+              setTimeLeft(newTimeLeft);
+            }
+            
+            // ✅ SCHEDULER TIMER: Không cập nhật timeLeft từ polling nữa
+            // Scheduler sẽ gửi timer updates qua Socket.IO
+            // if (sessionChanged || newSessionId !== currentSessionId) {
+            //   setTimeLeft(newTimeLeft);
+            // }
             
             // Nếu phiên thay đổi, cập nhật sessionId và reset các trạng thái
             if (sessionChanged || newSessionId !== currentSessionId) {
@@ -541,7 +622,7 @@ export default function TradePage() {
               // Reset các trạng thái liên quan khi session mới bắt đầu
               setTradeResults([]); // ✅ SỬA: Reset trade results khi bắt đầu phiên mới
               setTradesInCurrentSession(0); // Reset số lệnh trong phiên mới
-              console.log('🔄 Phiên mới bắt đầu:', newSessionId);
+              // console.log('🔄 Phiên mới bắt đầu:', newSessionId);
             }
             
             setSessionStatus(sessionData.currentSession.status);
@@ -565,10 +646,10 @@ export default function TradePage() {
           if (fallbackResponse.ok) {
             const fallbackData = await fallbackResponse.json();
             if (fallbackData.success) {
-              setTimeLeft(fallbackData.currentSession.timeLeft);
+              // ✅ SỬA: Chỉ cập nhật sessionId, không ghi đè timeLeft
               setCurrentSessionId(fallbackData.currentSession.sessionId);
               setSessionStatus(fallbackData.currentSession.status);
-              console.log('✅ Sử dụng fallback API thành công');
+              // console.log('✅ Sử dụng fallback API thành công');
             }
           }
         } catch (fallbackError) {
@@ -602,14 +683,15 @@ export default function TradePage() {
       }
     };
     
+    // ✅ SỬA: Tối ưu polling để không gây conflict với local timer
     if (timeLeft <= 0) {
       interval = 3000; // Poll mỗi 3 giây khi timer = 0 (chờ phiên mới)
     } else if (timeLeft <= 5) {
-      interval = 5000; // Poll mỗi 5 giây khi gần về 0
+      interval = 15000; // Poll mỗi 15 giây khi gần về 0 (giảm frequency)
     } else if (timeLeft <= 30) {
-      interval = 10000; // Poll mỗi 10 giây khi còn ít thời gian
+      interval = 30000; // Poll mỗi 30 giây khi còn ít thời gian
     } else {
-      interval = 30000; // Poll mỗi 30 giây khi còn nhiều thời gian
+      interval = 60000; // Poll mỗi 60 giây khi còn nhiều thời gian (giảm frequency)
     }
     
     const sessionInterval = setInterval(smartUpdateSession, interval);
@@ -617,119 +699,129 @@ export default function TradePage() {
     return () => clearInterval(sessionInterval);
   }, [currentSessionId, timeLeft, isPlacingTrade]); // ✅ Thêm isPlacingTrade vào dependency
 
-  // ✅ TỐI ƯU: Local timer với fallback cho server sync
+  // ✅ SCHEDULER TIMER: Nhận timer updates từ Scheduler thay vì local timer
   useEffect(() => {
-    if (timeLeft <= 0) {
-      return;
-    }
-    
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    
-    return () => clearInterval(timer);
-  }, [timeLeft]);
+    const handleTimerUpdate = (event: CustomEvent) => {
+      const { sessionId, timeLeft: serverTimeLeft } = event.detail;
+      
+      // ✅ FIX: Cập nhật session mới nếu khác với session hiện tại
+      if (sessionId !== currentSessionId) {
+        setCurrentSessionId(sessionId);
+        setTimeLeft(serverTimeLeft);
+        return;
+      }
+      
+      // Cập nhật timer cho session hiện tại
+      setTimeLeft(serverTimeLeft);
+    };
 
-  // ✅ SIMPLIFIED: Chỉ check results khi cần thiết
+    // Add event listener
+    window.addEventListener('session:timer:update', handleTimerUpdate as EventListener);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('session:timer:update', handleTimerUpdate as EventListener);
+    };
+  }, [currentSessionId]);
+
+
+
+  // ✅ SCHEDULER SYSTEM: Không cần trigger check-results nữa
+  // Scheduler sẽ tự động xử lý settlement
   useEffect(() => {
-    // Chỉ check results khi có lệnh pending và timer = 0
-    if (timeLeft === 0 && tradesInCurrentSession > 0 && !countdownStarted) {
-      console.log('🔍 Bắt đầu check kết quả cho', tradesInCurrentSession, 'lệnh');
-    }
-  }, [timeLeft, tradesInCurrentSession, countdownStarted]);
-
-  // ✅ SỬA: Thêm cờ để đánh dấu phiên đã được xử lý
-  const [processedSessions, setProcessedSessions] = useState<string[]>([]);
-
-  // Force update session when timeLeft reaches 0
-  useEffect(() => {
-    // ✅ SỬA: Chỉ trigger nếu phiên chưa được xử lý
-    if (timeLeft === 0 && !countdownStarted && !processedSessions.includes(currentSessionId)) {
-      console.log('🔍 Bắt đầu xử lý kết quả cho phiên:', currentSessionId);
+    if (timeLeft === 0) {
       
-      // Đánh dấu phiên này đã được xử lý
-      setProcessedSessions(prev => [...prev, currentSessionId]);
-      
-      // Đánh dấu countdown đã bắt đầu để tránh bắt đầu lại
-      setCountdownStarted(true);
-      
-      // Lock balance để tránh cập nhật trong quá trình countdown
-      setIsBalanceLocked(true);
-      
-      // Bắt đầu countdown 12 giây
-      setUpdateCountdown(12); // Giữ nguyên 12 giây để tạo kịch tính
-      
-      // ✅ SIMPLIFIED: Sync balance và reset countdown sau 12 giây
+      // Chỉ sync balance, không cần gọi check-results
       const syncBalanceAfterDelay = async () => {
         try {
-          // ✅ TẠM DỪNG BALANCE SYNC: Không sync khi đang đặt lệnh
           if (!isPlacingTrade) {
             await syncBalance(setBalance, setIsSyncingBalance, setLastBalanceSync);
           }
         } catch (error) {
-          console.error('Lỗi khi sync balance sau 12 giây:', error);
+          console.error('Lỗi khi sync balance:', error);
         } finally {
           setUpdateCountdown(null);
-          setCountdownStarted(false); // Reset để có thể bắt đầu countdown mới
-          setIsBalanceLocked(false); // Unlock balance sau khi sync xong
+          setIsBalanceLocked(false);
         }
       };
 
       // Sync balance sau 12 giây
       setTimeout(syncBalanceAfterDelay, 12000);
-
-      // ✅ SIMPLIFIED: Chỉ trigger check results một lần sau 12 giây
-      // Socket.IO sẽ handle real-time updates, không cần duplicate triggers
-      setTimeout(async () => {
-        try {
-          
-          const checkResultsResponse = await fetch('/api/trades/check-results', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-            },
-            body: JSON.stringify({ sessionId: currentSessionId })
-          });
-
-          if (checkResultsResponse.ok) {
-            console.log('📡 [CHECK-RESULTS] Triggered successfully, Socket.IO sẽ cập nhật real-time');
-          } else {
-            console.error('❌ Lỗi khi trigger check results:', checkResultsResponse.status);
-          }
-        } catch (error) {
-          console.error('❌ Lỗi khi trigger check results:', error);
-        }
-      }, 12000);
-
-      // ✅ REMOVED: Không cần force update session vì polling đã handle
-    } else if (timeLeft === 0 && processedSessions.includes(currentSessionId)) {
-      // ✅ SỬA: Phiên đã được xử lý rồi, bỏ qua
-      console.log('🔍 Phiên', currentSessionId, 'đã được xử lý rồi, bỏ qua');
     }
-  }, [timeLeft, currentSessionId, toast, countdownStarted, processedSessions]);
+  }, [timeLeft, currentSessionId, toast, isPlacingTrade]);
+
+
+
 
   // Track which trades have been processed to prevent duplicate updates
   const processedTradesRef = useRef<Set<string>>(new Set());
 
-  // Reset countdownStarted và isBalanceLocked khi session mới bắt đầu
+  // ✅ SCHEDULER EVENTS: Lắng nghe events từ Scheduler
   useEffect(() => {
-    if (timeLeft > 0 && countdownStarted) {
-      setCountdownStarted(false);
-    }
+    const handleTradeWindowOpened = (event: CustomEvent) => {
+      const data = event.detail;
+      console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
+      console.log('📈 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+      console.log('📈 [FRONTEND-SCHEDULER] Trade window opened at:', data.timestamp);
+      console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
+      // Có thể cập nhật UI state nếu cần
+    };
+
+    const handleTradeWindowClosed = (event: CustomEvent) => {
+      const data = event.detail;
+      console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
+      console.log('📉 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+      console.log('📉 [FRONTEND-SCHEDULER] Trade window closed at:', data.timestamp);
+      console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
+      // Có thể cập nhật UI state nếu cần
+    };
+
+    const handleSettlementTriggered = (event: CustomEvent) => {
+      const data = event.detail;
+    };
+
+    const handleSettlementCompleted = (event: CustomEvent) => {
+      const data = event.detail;
+      console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+      console.log('✅ [FRONTEND-SCHEDULER] Session:', data.sessionId);
+      console.log('✅ [FRONTEND-SCHEDULER] Total wins:', data.totalWins);
+      console.log('✅ [FRONTEND-SCHEDULER] Total losses:', data.totalLosses);
+      console.log('✅ [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
+      console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+    };
+
+    const handleSessionCompleted = (event: CustomEvent) => {
+      const data = event.detail;
+      console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+      console.log('🏁 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+      console.log('🏁 [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
+      console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+      // Có thể cập nhật UI state nếu cần
+    };
+
+    // Add event listeners
+    window.addEventListener('session:trade_window:opened', handleTradeWindowOpened as EventListener);
+    window.addEventListener('session:trade_window:closed', handleTradeWindowClosed as EventListener);
+    window.addEventListener('session:settlement:triggered', handleSettlementTriggered as EventListener);
+    window.addEventListener('session:settlement:completed', handleSettlementCompleted as EventListener);
+    window.addEventListener('session:completed', handleSessionCompleted as EventListener);
+
+    // Cleanup
+    return () => {
+      window.removeEventListener('session:trade_window:opened', handleTradeWindowOpened as EventListener);
+      window.removeEventListener('session:trade_window:closed', handleTradeWindowClosed as EventListener);
+      window.removeEventListener('session:settlement:triggered', handleSettlementTriggered as EventListener);
+      window.removeEventListener('session:settlement:completed', handleSettlementCompleted as EventListener);
+      window.removeEventListener('session:completed', handleSessionCompleted as EventListener);
+    };
+  }, [toast]);
+
+  // Reset isBalanceLocked khi session mới bắt đầu
+  useEffect(() => {
     if (timeLeft > 0 && isBalanceLocked) {
       setIsBalanceLocked(false);
     }
-    // ✅ SỬA: Reset processedSessions khi session mới bắt đầu
-    if (timeLeft > 0) {
-      setProcessedSessions([]);
-    }
-  }, [timeLeft, countdownStarted, isBalanceLocked]);
+  }, [timeLeft, isBalanceLocked]);
 
   // Quản lý countdown cập nhật
   useEffect(() => {
@@ -830,7 +922,7 @@ export default function TradePage() {
     
     // ✅ THÊM: Kiểm tra và ngăn multiple calls
     if (isPlacingTrade || isSubmitting) {
-      console.log('🔄 [RACE PREVENTION] Đang xử lý lệnh trước, bỏ qua request này');
+      // console.log('🔄 [RACE PREVENTION] Đang xử lý lệnh trước, bỏ qua request này');
       return;
     }
     
@@ -883,7 +975,7 @@ export default function TradePage() {
     setIsConfirming(false);
     setIsPlacingTrade(true);
 
-    console.log('🚀 [TRADE REQUEST] Bắt đầu đặt lệnh:', { selectedAction, amount, currentSessionId });
+    // Starting trade placement
 
     try {
       // Debug log request body
@@ -974,20 +1066,14 @@ export default function TradePage() {
         // Hiển thị thông tin về số lệnh đã đặt trong phiên
         const sessionInfo = tradesInSession > 1 ? ` (Lệnh thứ ${tradesInSession} trong phiên)` : '';
         
+
         toast({
           title: '✅ Đặt lệnh thành công!',
           description: `Lệnh ${selectedAction === 'UP' ? 'LÊN' : 'XUỐNG'} - ${formatCurrency(Number(amount))} - Đang đợi kết quả${sessionInfo}`,
-          duration: 5000, // Tăng thời gian hiển thị lên 5 giây
+          duration: 2500, // Hiển thị 2.5 giây cho giao diện điện thoại
         });
 
-        console.log('🎉 Đặt lệnh thành công:', {
-          tradeId: data.tradeId,
-          sessionId: currentSessionId,
-          direction: selectedAction,
-          amount: Number(amount),
-          tradesInSession: tradesInSession,
-          balanceAfter: data.balance
-        });
+        // Trade placed successfully
 
         // ✅ CẬP NHẬT BALANCE NGAY (Optimistic UI)
         const tradeAmount = Number(amount);
@@ -995,7 +1081,6 @@ export default function TradePage() {
         setFrozenBalance(prev => prev + tradeAmount);
         
         // Socket.IO event sẽ được gửi từ server
-        console.log('🎉 Đặt lệnh thành công, Socket.IO sẽ cập nhật real-time');
       }
     } catch (error) {
       console.error('Lỗi khi đặt lệnh:', error);

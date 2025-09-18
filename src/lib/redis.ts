@@ -6,7 +6,6 @@ const REDIS_CONFIG = {
   port: parseInt(process.env.REDIS_PORT || '6379'),
   password: process.env.REDIS_PASSWORD || undefined,
   db: parseInt(process.env.REDIS_DB || '0'),
-  url: process.env.REDIS_URL,
 };
 
 class RedisManager {
@@ -22,16 +21,9 @@ class RedisManager {
       console.log('🔌 Connecting to Redis...');
       
       this.client = createClient({
-        url: REDIS_CONFIG.url,
         socket: {
           host: REDIS_CONFIG.host,
           port: REDIS_CONFIG.port,
-          reconnectStrategy: (retries) => {
-            const delay = Math.min(1000 * Math.pow(2, retries), 15000);
-            return delay; // in ms; returning number enables reconnect
-          },
-          connectTimeout: 10000,
-          keepAlive: 1,
         },
         password: REDIS_CONFIG.password,
         database: REDIS_CONFIG.db,
@@ -50,10 +42,6 @@ class RedisManager {
       this.client.on('disconnect', () => {
         console.log('🔌 Redis disconnected');
         this.isConnected = false;
-      });
-
-      this.client.on('reconnecting', () => {
-        console.log('⏳ Redis reconnecting...');
       });
 
       await this.client.connect();
@@ -106,17 +94,10 @@ class RedisManager {
   async releaseLock(key: string): Promise<boolean> {
     const client = this.getClient();
     const lockKey = `lock:${key}`;
-    // Use Lua script to delete only if owned (best-effort without storing value for now)
+    
     try {
-      const script = `
-        if redis.call('EXISTS', KEYS[1]) == 1 then
-          return redis.call('DEL', KEYS[1])
-        else
-          return 0
-        end
-      `;
-      const result = await client.eval(script, { keys: [lockKey], arguments: [] });
-      return Number(result) > 0;
+      const result = await client.del(lockKey);
+      return result > 0;
     } catch (error) {
       console.error(`❌ Failed to release lock ${key}:`, error);
       return false;

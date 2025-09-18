@@ -98,7 +98,10 @@ export async function atomicCheckTradeResult(tradeId, userId, sessionId, amount,
                 // 4. Lấy kết quả session từ cache hoặc database
                 let sessionResult = await redisManager.getSessionResult(sessionId);
                 if (!sessionResult) {
-                    const sessionDoc = await db.collection('trading_sessions').findOne({ sessionId }, { result: 1 });
+                    const sessionDoc = await db.collection('trading_sessions').findOne(
+                        { sessionId }, 
+                        { projection: { result: 1 } }
+                    );
                     if (!sessionDoc || !sessionDoc.result) {
                         throw new Error(`Session result not available: ${sessionId}`);
                     }

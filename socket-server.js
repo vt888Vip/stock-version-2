@@ -55,13 +55,7 @@ io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth.token;
     
-    console.log('🔐 Socket authentication attempt:', {
-      hasToken: !!token,
-      token: token ? token.substring(0, 20) + '...' : 'none'
-    });
-    
     if (!token) {
-      console.log('⚠️ No token provided, allowing connection for testing');
       socket.userId = 'test-user';
       socket.user = { userId: 'test-user' };
       return next();
@@ -73,46 +67,34 @@ io.use(async (socket, next) => {
     try {
       // Try JWT token first
       if (token.startsWith('eyJ') && token.split('.').length === 3) {
-        console.log('🔐 Attempting JWT token verification');
         const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
-        
         if (decoded && decoded.userId) {
           userId = decoded.userId;
-          console.log('✅ JWT token verified for user:', userId);
         }
       } 
       // Try custom token format: user_<userId>_<timestamp>_<random>
       else if (token.startsWith('user_')) {
-        console.log('🔐 Attempting custom token parsing');
         const parts = token.split('_');
-        
         if (parts.length >= 3 && parts[0] === 'user') {
           userId = parts[1];
-          console.log('✅ Custom token parsed for user:', userId);
         }
       }
       
       if (userId) {
-        // Attach user info to socket
         socket.userId = userId;
         socket.user = { userId: userId };
-        console.log('✅ Socket authenticated for user:', socket.userId);
         next();
       } else {
-        console.log('⚠️ Invalid token format, allowing connection for testing');
         socket.userId = 'test-user';
         socket.user = { userId: 'test-user' };
         next();
       }
     } catch (error) {
-      console.log('⚠️ Token verification failed, allowing connection for testing');
       socket.userId = 'test-user';
       socket.user = { userId: 'test-user' };
       next();
     }
   } catch (error) {
-    console.error('Socket authentication error:', error);
-    // Allow connection for testing
     socket.userId = 'test-user';
     socket.user = { userId: 'test-user' };
     next();
@@ -121,14 +103,9 @@ io.use(async (socket, next) => {
 
 // Connection handler
 io.on('connection', (socket) => {
-  console.log(`🔗 User ${socket.userId} connected to Socket.IO`);
-  
   // Join user-specific room
   const userRoom = `user_${socket.userId}`;
   socket.join(userRoom);
-  
-  console.log(`🏠 User ${socket.userId} joined room: ${userRoom}`);
-  console.log(`📊 Total rooms:`, Array.from(io.sockets.adapter.rooms.keys()));
   
   // Send connection confirmation
   socket.emit('connected', {
@@ -139,13 +116,11 @@ io.on('connection', (socket) => {
 
   // Handle disconnect
   socket.on('disconnect', () => {
-    console.log(`🔌 User ${socket.userId} disconnected from Socket.IO`);
     socket.leave(userRoom);
   });
 
   // Handle trade placement confirmation
   socket.on('trade:placed', (data) => {
-    console.log(`📊 Trade placed by user ${socket.userId}:`, data);
     // Broadcast to user room
     socket.to(userRoom).emit('trade:placed', data);
   });
@@ -154,17 +129,38 @@ io.on('connection', (socket) => {
 // Function to send events to specific user
 const sendToUser = (userId, event, data) => {
   try {
+    // ✅ FIX: Hỗ trợ broadcast to all users
+    if (userId === 'all') {
+      console.log(`📡 [SOCKET] Broadcasting ${event} to all users`);
+      io.emit(event, {
+        ...data,
+        timestamp: new Date().toISOString()
+      });
+      return true;
+    }
+    
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
-    
-    console.log(`📡 Attempting to send ${event} to user ${userId} in room ${userRoom} (${roomSize} clients)`);
     
     io.to(userRoom).emit(event, {
       ...data,
       timestamp: new Date().toISOString()
     });
     
-    console.log(`✅ Sent ${event} to user ${userId}:`, data);
+    // Chỉ log những events quan trọng
+    if (event === 'trade:history:updated') {
+      const action = data.action || 'update';
+      const tradeCount = data.trade ? 1 : (data.trades ? data.trades.length : 0);
+      console.log(`📊 [LỊCH SỬ] ${action === 'add' ? 'Thêm' : 'Cập nhật'} ${tradeCount} giao dịch cho user ${userId}`);
+    } else if (event === 'balance:updated') {
+      const profit = data.profit || data.totalProfit || 0;
+      const tradeCount = data.tradeCount || 1;
+      const result = data.result || 'unknown';
+      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profit >= 0 ? '+' : ''}${profit.toLocaleString()} VND (${result}, ${tradeCount} giao dịch)`);
+    } else if (event === 'session:timer:update') {
+      console.log(`⏰ [SOCKET] Timer update sent to ${userId === 'all' ? 'all users' : `user ${userId}`}: ${data.timeLeft}s for session ${data.sessionId}`);
+    }
+    
     return true;
   } catch (error) {
     console.error(`❌ Error sending ${event} to user ${userId}:`, error);

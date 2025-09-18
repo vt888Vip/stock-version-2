@@ -72,14 +72,12 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       console.log('📡 Socket.IO server message:', data);
     });
 
-    // Debug: Log tất cả events
-    newSocket.onAny((eventName, ...args) => {
-      console.log('🔍 Socket.IO event received:', eventName, args);
-    });
+    // Debug: Log tất cả events (disabled for cleaner console)
+    // newSocket.onAny((eventName, ...args) => {
+    //   console.log('🔍 Socket.IO event received:', eventName, args);
+    // });
 
     newSocket.on('trade:placed', (data) => {
-      console.log('📊 Trade placed event received:', data);
-      
       // Dispatch custom event để cập nhật trade history
       const tradePlacedEvent = new CustomEvent('trade:placed', {
         detail: data
@@ -90,9 +88,6 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     newSocket.on('trade:completed', (data) => {
-      console.log('🎉 Trade completed event received:', data);
-      console.log('🎉 Dispatching custom event for trade:completed');
-      
       // Dispatch custom event để cập nhật trade history
       const tradeCompletedEvent = new CustomEvent('trade:completed', {
         detail: data
@@ -102,9 +97,17 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       // Không hiển thị toast vì UI đã cập nhật real-time
     });
 
-    newSocket.on('balance:updated', (data) => {
-      console.log('💰 Balance updated event received:', data);
+    newSocket.on('trades:batch:completed', (data) => {
+      // Dispatch custom event để cập nhật trade history
+      const batchCompletedEvent = new CustomEvent('trades:batch:completed', {
+        detail: data
+      });
+      window.dispatchEvent(batchCompletedEvent);
       
+      // Không hiển thị toast vì UI đã cập nhật real-time
+    });
+
+    newSocket.on('balance:updated', (data) => {
       // Dispatch custom event để các component khác có thể lắng nghe
       const balanceEvent = new CustomEvent('balance:updated', {
         detail: data
@@ -115,9 +118,6 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     newSocket.on('trade:history:updated', (data) => {
-      console.log('📊 Trade history updated event received:', data);
-      console.log('📊 Dispatching custom event for trade:history:updated');
-      
       // Dispatch custom event để các component khác có thể lắng nghe
       const tradeHistoryEvent = new CustomEvent('trade:history:updated', {
         detail: data
@@ -125,6 +125,50 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       window.dispatchEvent(tradeHistoryEvent);
       
       // Không hiển thị toast vì UI đã cập nhật real-time
+    });
+
+    // ✅ SCHEDULER EVENTS: Lắng nghe events từ Scheduler
+    newSocket.on('session:trade_window:opened', (data) => {
+      const event = new CustomEvent('session:trade_window:opened', {
+        detail: data
+      });
+      window.dispatchEvent(event);
+    });
+
+    newSocket.on('session:trade_window:closed', (data) => {
+      const event = new CustomEvent('session:trade_window:closed', {
+        detail: data
+      });
+      window.dispatchEvent(event);
+    });
+
+    newSocket.on('session:settlement:triggered', (data) => {
+      const event = new CustomEvent('session:settlement:triggered', {
+        detail: data
+      });
+      window.dispatchEvent(event);
+    });
+
+    // ✅ TIMER UPDATES: Lắng nghe timer updates từ Scheduler
+    newSocket.on('session:timer:update', (data) => {
+      const event = new CustomEvent('session:timer:update', {
+        detail: data
+      });
+      window.dispatchEvent(event);
+    });
+
+    newSocket.on('session:settlement:completed', (data) => {
+      const event = new CustomEvent('session:settlement:completed', {
+        detail: data
+      });
+      window.dispatchEvent(event);
+    });
+
+    newSocket.on('session:completed', (data) => {
+      const event = new CustomEvent('session:completed', {
+        detail: data
+      });
+      window.dispatchEvent(event);
     });
 
     newSocket.on('error', (error) => {

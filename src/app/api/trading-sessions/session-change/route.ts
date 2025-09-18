@@ -3,6 +3,7 @@ import { getMongoDb } from '@/lib/db';
 import { NextRequest } from 'next/server';
 import { publishSettlementMessage } from '@/lib/rabbitmq';
 import TradingSessionModel from '@/models/TradingSession';
+import { tradingScheduler } from '@/lib/scheduler/TradingScheduler';
 
 // Hàm gửi settlement message vào queue sử dụng RabbitMQ Manager
 async function sendSettlementMessage(settlementData: {
@@ -50,92 +51,74 @@ export async function GET(request: NextRequest) {
     // Tạo sessionId cho phiên hiện tại
     const sessionId = `${currentMinute.getUTCFullYear()}${String(currentMinute.getUTCMonth() + 1).padStart(2, '0')}${String(currentMinute.getUTCDate()).padStart(2, '0')}${String(currentMinute.getUTCHours()).padStart(2, '0')}${String(currentMinute.getUTCMinutes()).padStart(2, '0')}`;
 
-    // Lấy phiên hiện tại từ database với timeout
-    let currentSession;
+    // ✅ SCHEDULER ONLY: Kiểm tra session hiện tại trước khi tạo mới
+    let currentSession = null;
+    let sessionChanged = false;
+    let sessionEnded = false;
+    
+    // Kiểm tra session hiện tại trong database
     try {
-      currentSession = await Promise.race([
-        TradingSessionModel.findOne({ 
-          sessionId: sessionId,
-          status: { $in: ['ACTIVE', 'COMPLETED'] }
-        }).lean(),
-        new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Database timeout')), 5000)
-        )
-      ]) as any;
+      currentSession = await db.collection('trading_sessions').findOne({ 
+        sessionId: sessionId
+      });
+      
+      if (currentSession) {
+        // Session đã tồn tại
+        sessionEnded = currentSession.endTime <= now;
+        sessionChanged = sessionEnded; // Chỉ thay đổi khi session kết thúc
+      } else {
+        // Session chưa tồn tại, cần tạo mới
+        sessionChanged = true;
+      }
     } catch (dbError) {
-      console.error('❌ [SESSION-CHANGE] Database query timeout:', dbError);
-      // Fallback: tạo session mới nếu không thể query database
-      currentSession = null;
+      console.error('❌ Database query error:', dbError);
+      // Fallback: tạo session mới
+      sessionChanged = true;
     }
+    
 
-    // Kiểm tra xem phiên hiện tại có kết thúc chưa
-    const sessionEnded = currentSession && currentSession.endTime <= now;
-    const sessionChanged = sessionEnded || !currentSession;
+    // ✅ SCHEDULER ONLY: Không cần gửi settlement message nữa
+    // Scheduler sẽ tự động xử lý settlement
 
-    // Nếu phiên đã kết thúc và chưa được xử lý, gửi settlement message
-    if (sessionEnded && currentSession && currentSession.status === 'ACTIVE') {
-      console.log('⏰ Phiên đã kết thúc, gửi settlement message:', currentSession.sessionId);
+    // ✅ SCHEDULER ONLY: Chỉ tạo session mới khi cần thiết
+    if (sessionChanged) {
+      const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
+      
+      // ✅ AUTO-START SCHEDULER: Tự động start Scheduler nếu chưa chạy
+      if (!tradingScheduler.running) {
+        try {
+          await tradingScheduler.start();
+        } catch (schedulerError) {
+          console.error(`❌ Failed to start scheduler:`, schedulerError);
+          throw new Error(`Failed to start scheduler: ${schedulerError.message}`);
+        }
+      }
       
       try {
-        console.log(`🔍 [SESSION-CHANGE] Session ${currentSession.sessionId} có kết quả: ${currentSession.result}`);
+        const sessionInfo = await tradingScheduler.startSession(
+          sessionId,
+          currentMinute,
+          nextMinute,
+          result
+        );
         
-        const settlementData = {
-          sessionId: currentSession.sessionId,
-          id: `settlement_${currentSession.sessionId}_${Date.now()}`,
-          timestamp: new Date().toISOString()
+        currentSession = {
+          sessionId: sessionInfo.sessionId,
+          startTime: sessionInfo.startTime,
+          endTime: sessionInfo.endTime,
+          status: sessionInfo.status,
+          result: sessionInfo.result,
+          processingComplete: false,
+          totalTrades: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWinAmount: 0,
+          totalLossAmount: 0
         };
-
-        // Gửi vào queue settlements
-        const queueResult = await sendSettlementMessage(settlementData);
         
-        if (queueResult) {
-          console.log('✅ Đã gửi settlement vào queue:', currentSession.sessionId);
-        } else {
-          console.log('❌ Không thể gửi settlement vào queue');
-        }
-      } catch (error) {
-        console.error('❌ Lỗi khi gửi settlement vào queue:', error);
-      }
-    }
-
-    if (sessionChanged) {
-      // Tạo phiên mới nếu cần
-      if (!currentSession || sessionEnded) {
-        // ✅ KIỂM TRA XEM SESSION ĐÃ TỒN TẠI CHƯA
-        const existingSession = await TradingSessionModel.findOne({ sessionId }).lean();
-        
-        if (existingSession) {
-          // ✅ SỬ DỤNG KẾT QUẢ CÓ SẴN
-          console.log(`✅ Sử dụng session có sẵn ${sessionId} với kết quả: ${existingSession.result}`);
-          currentSession = existingSession;
-        } else {
-          // ✅ CHỈ TẠO KẾT QUẢ RANDOM KHI THỰC SỰ TẠO SESSION MỚI
-          const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
-          
-          const newSession = new TradingSessionModel({
-            sessionId,
-            startTime: currentMinute,
-            endTime: nextMinute,
-            status: 'ACTIVE',
-            result, // Kết quả được tạo sẵn
-            processingComplete: false,
-            totalTrades: 0,
-            totalWins: 0,
-            totalLosses: 0,
-            totalWinAmount: 0,
-            totalLossAmount: 0
-          });
-
-          // Sử dụng upsert để tránh tạo trùng lặp
-          await TradingSessionModel.updateOne(
-            { sessionId },
-            { $setOnInsert: newSession },
-            { upsert: true }
-          );
-          
-          currentSession = newSession.toObject() as any;
-          console.log(`✅ Đã tạo phiên mới ${sessionId} với kết quả: ${result}`);
-        }
+      } catch (sessionError) {
+        console.error(`❌ Failed to create session:`, sessionError);
+        throw new Error(`Failed to create session: ${sessionError.message}`);
       }
     }
 
@@ -145,14 +128,14 @@ export async function GET(request: NextRequest) {
     const response = {
       success: true,
       sessionChanged,
-      currentSession: {
-        sessionId: currentSession?.sessionId || sessionId,
-        startTime: currentSession?.startTime || currentMinute,
-        endTime: currentSession?.endTime || nextMinute,
+      currentSession: currentSession ? {
+        sessionId: currentSession.sessionId,
+        startTime: currentSession.startTime,
+        endTime: currentSession.endTime,
         timeLeft,
-        status: currentSession?.status || 'ACTIVE',
-        result: currentSession?.result || null
-      },
+        status: currentSession.status,
+        result: currentSession.result
+      } : null,
       serverTime: now.toISOString()
     };
 

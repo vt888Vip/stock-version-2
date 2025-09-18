@@ -130,7 +130,7 @@ class FutureSessionsManager {
       const existingFutureSessions = await db.collection('trading_sessions')
         .find({
           startTime: { $gt: now },
-          status: 'ACTIVE'
+          status: 'PENDING'  // ✅ Sửa để tìm session PENDING thay vì ACTIVE
         })
         .count();
 
@@ -181,8 +181,11 @@ class FutureSessionsManager {
             sessionId,
             startTime: sessionStartTime,
             endTime: sessionEndTime,
-            status: 'ACTIVE',
+            status: 'PENDING',           // ✅ Tương thích với TradingScheduler
             result, // Kết quả được tạo sẵn
+            schedulerStatus: 'PENDING',  // ✅ Thêm field cho Scheduler
+            tradeWindowOpen: false,      // ✅ Thêm field cho trade window
+            settlementScheduled: false,  // ✅ Thêm field cho settlement
             processingComplete: false,
             totalTrades: 0,
             totalWins: 0,

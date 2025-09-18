@@ -43,7 +43,18 @@ export default function ClientLayout({
         .catch(error => {
           console.error('❌ Error initializing background services:', error);
         });
-    }
+
+      // ✅ Khởi động Scheduler Service
+      fetch('/api/scheduler/init', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          if (!data.success) {
+            console.error('❌ Failed to initialize scheduler service:', data.message);
+          }
+        })
+        .catch(error => {
+          console.error('❌ Error initializing scheduler service:', error);
+        });    }
   }, []);
 
   return (

@@ -666,13 +666,17 @@ async function processCheckResult(tradeData) {
         message: result.isWin ? '🎉 Thắng!' : '😔 Thua'
       });
 
-      await sendSocketEvent(userId, 'balance:updated', {
+      const balanceEventResult = await sendSocketEvent(userId, 'balance:updated', {
         tradeId,
         profit: result.profit,
         amount: amount,
         result: result.isWin ? 'win' : 'lose',
         message: `Balance đã được cập nhật: ${result.isWin ? '+' : ''}${result.profit} VND`
       });
+      
+      if (!balanceEventResult) {
+        console.error(`❌ [CHECK-RESULT] Failed to send balance:updated event for trade ${tradeId}`);
+      }
 
       await sendSocketEvent(userId, 'trade:history:updated', {
         action: 'update',
@@ -1005,9 +1009,11 @@ async function processSettlement(settlementData) {
 
              // 3. Xử lý từng trade
        for (const trade of pendingTrades) {
-         const isWin = trade.direction === sessionResult;
-         // ✅ TỶ LỆ 10 ĂN 9: Đặt 10 thắng 9, đặt 100 thắng 90
-         const profit = isWin ? Math.floor(trade.amount * 0.9) : 0;
+         // ✅ SỬA: Sử dụng logic thống nhất như processTrade
+         const userPrediction = trade.type === 'buy' ? 'UP' : 'DOWN';
+         const isWin = userPrediction === sessionResult;
+         // ✅ SỬA: Logic profit thống nhất
+         const profit = isWin ? Math.floor(trade.amount * 0.9) : -trade.amount;
 
         // Cập nhật trade (sử dụng cùng collection với API)
         await mongoose.connection.db.collection('trades').updateOne(
@@ -1020,7 +1026,8 @@ async function processSettlement(settlementData) {
               appliedToBalance: true,
               updatedAt: new Date()
             }
-          }
+          },
+          { session }
         );
 
                  // ✅ ĐÚNG: Cập nhật balance khi xử lý settlement
@@ -1036,7 +1043,8 @@ async function processSettlement(settlementData) {
                $set: {
                  updatedAt: new Date()
                }
-             }
+             },
+             { session }
            );
          } else {
            // THUA: Chỉ trừ frozen (mất tiền)
@@ -1049,7 +1057,8 @@ async function processSettlement(settlementData) {
                $set: {
                  updatedAt: new Date()
                }
-             }
+             },
+             { session }
            );
          }
 
@@ -1085,44 +1094,69 @@ async function processSettlement(settlementData) {
               console.log(`✅ [SETTLEMENT] Xử lý settlement thành công: ${settlementData.id}`);
         console.log(`📊 [SETTLEMENT] Thống kê: ${pendingTrades.length} trades, ${totalWins} wins, ${totalLosses} losses`);
 
-        // Gửi Socket.IO events cho tất cả trades đã xử lý
+        // ✅ SỬA: Gửi batch events thay vì individual events
+        const userTrades = new Map();
+        
+        // Group trades by user
         for (const trade of pendingTrades) {
-          const isWin = trade.direction === sessionResult;
-          const profit = isWin ? Math.floor(trade.amount * 0.9) : 0;
-
-          await sendSocketEvent(trade.userId.toString(), 'trade:completed', {
+          const userPrediction = trade.type === 'buy' ? 'UP' : 'DOWN';
+          const isWin = userPrediction === sessionResult;
+          const profit = isWin ? Math.floor(trade.amount * 0.9) : -trade.amount;
+          
+          const userId = trade.userId.toString();
+          if (!userTrades.has(userId)) {
+            userTrades.set(userId, []);
+          }
+          
+          userTrades.get(userId).push({
             tradeId: trade.tradeId || trade._id.toString(),
             sessionId,
             result: isWin ? 'win' : 'lose',
             profit: profit,
             amount: trade.amount,
-            direction: trade.direction,
-            message: isWin ? '🎉 Thắng!' : '😔 Thua'
+            direction: userPrediction, // ✅ SỬA: Sử dụng logic thống nhất
+            status: 'completed',
+            createdAt: new Date().toISOString()
           });
-
-          await sendSocketEvent(trade.userId.toString(), 'balance:updated', {
-            tradeId: trade.tradeId || trade._id.toString(),
-            profit: profit,
-            amount: trade.amount, // ✅ THÊM: Số tiền đặt lệnh để frontend tính balance đúng
-            result: isWin ? 'win' : 'lose',
-            message: `Balance đã được cập nhật: ${isWin ? '+' : ''}${profit} VND`
+        }
+        
+        // Send batch events to each user
+        for (const [userId, trades] of userTrades) {
+          await sendSocketEvent(userId, 'trades:batch:completed', {
+            sessionId,
+            trades: trades,
+            totalTrades: trades.length,
+            totalWins: trades.filter(t => t.result === 'win').length,
+            totalLosses: trades.filter(t => t.result === 'lose').length,
+            message: `Đã xử lý ${trades.length} trades cho session ${sessionId}`
           });
-
-                     await sendSocketEvent(trade.userId.toString(), 'trade:history:updated', {
-             action: 'update',
-             trade: {
-               id: trade.tradeId || trade._id.toString(),
-               tradeId: trade.tradeId || trade._id.toString(), // Thêm tradeId để đảm bảo compatibility
-               sessionId,
-               direction: trade.direction,
-               amount: trade.amount,
-               status: 'completed',
-               result: isWin ? 'win' : 'lose',
-               profit: profit,
-               createdAt: new Date().toISOString() // Sửa từ processedAt thành createdAt
-             },
-             message: 'Lịch sử giao dịch đã được cập nhật'
-           });
+          
+          // Send single balance update for all trades
+          const totalProfit = trades.reduce((sum, trade) => sum + trade.profit, 0);
+          await sendSocketEvent(userId, 'balance:updated', {
+            sessionId,
+            totalProfit: totalProfit,
+            tradeCount: trades.length,
+            message: `Balance đã được cập nhật: ${totalProfit >= 0 ? '+' : ''}${totalProfit} VND`
+          });
+          
+          // ✅ FIX: Gửi trade:history:updated cho từng trade
+          for (const trade of trades) {
+            await sendSocketEvent(userId, 'trade:history:updated', {
+              action: 'update',
+              trade: {
+                id: trade.tradeId,
+                tradeId: trade.tradeId,
+                sessionId: trade.sessionId,
+                direction: trade.direction,
+                amount: trade.amount,
+                status: trade.status,
+                result: trade.result,
+                profit: trade.profit,
+                createdAt: trade.createdAt
+              }
+            });
+          }
         }
         
         return {
@@ -1195,17 +1229,20 @@ async function sendSocketEvent(userId, event, data) {
 async function startWorker() {
   try {
     const workerId = process.env.WORKER_ID || '1';
-    console.log(`🚀 Khởi động Trade Worker ${workerId}...`);
+    const workerNumber = process.env.WORKER_NUMBER || '1';
+    console.log(`🚀 Khởi động Trade Worker ${workerNumber} (ID: ${workerId})...`);
     
     // Kết nối databases
     await connectMongoDB();
     await connectRedis();
     await connectRabbitMQ();
     
-    // Thiết lập prefetch
-    await channel.prefetch(1);
+    // ✅ TĂNG PREFETCH CHO MULTIPLE WORKERS
+    const prefetchCount = parseInt(process.env.WORKER_PREFETCH || '10');
+    await channel.prefetch(prefetchCount);
+    console.log(`📊 Worker ${workerId} prefetch set to: ${prefetchCount}`);
     
-    console.log('✅ Worker đã sẵn sàng xử lý messages');
+    console.log(`✅ Worker ${workerNumber} đã sẵn sàng xử lý messages (PID: ${process.pid})`);
     
     // Consumer cho trade-processing queue
     channel.consume(TRADE_PROCESSING_QUEUE, async (msg) => {
@@ -1327,6 +1364,75 @@ process.on('SIGINT', async () => {
   console.log('✅ Worker đã tắt');
   process.exit(0);
 });
+
+// ✅ GRACEFUL SHUTDOWN HANDLERS
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) {
+    console.log('⚠️ Shutdown already in progress...');
+    return;
+  }
+  
+  isShuttingDown = true;
+  const workerNumber = process.env.WORKER_NUMBER || '1';
+  console.log(`\n🛑 Worker ${workerNumber} nhận signal ${signal}, đang tắt gracefully...`);
+  
+  try {
+    // Close RabbitMQ connections
+    if (channel) {
+      console.log('🔄 Đang đóng RabbitMQ channel...');
+      await channel.close();
+    }
+    
+    if (connection) {
+      console.log('🔄 Đang đóng RabbitMQ connection...');
+      await connection.close();
+    }
+    
+    // Close Redis connection
+    if (redisClient) {
+      console.log('🔄 Đang đóng Redis connection...');
+      await redisClient.disconnect();
+    }
+    
+    // Close MongoDB connection
+    if (mongoose.connection.readyState === 1) {
+      console.log('🔄 Đang đóng MongoDB connection...');
+      await mongoose.connection.close();
+    }
+    
+    console.log('✅ Worker đã tắt gracefully');
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Lỗi trong quá trình shutdown:', error);
+    process.exit(1);
+  }
+}
+
+// ✅ SIGNAL HANDLERS
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGQUIT', () => gracefulShutdown('SIGQUIT'));
+
+// ✅ UNCAUGHT EXCEPTION HANDLERS
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  gracefulShutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  gracefulShutdown('unhandledRejection');
+});
+
+// ✅ HEALTH CHECK
+setInterval(() => {
+  if (!isShuttingDown) {
+    const workerNumber = process.env.WORKER_NUMBER || '1';
+    console.log(`💓 Worker ${workerNumber} health check - PID: ${process.pid}, Uptime: ${Math.floor(process.uptime())}s`);
+  }
+}, 60000); // Mỗi 1 phút
 
 // Start worker
 startWorker();
