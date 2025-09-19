@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db';
-import User from '@/models/User';
+import { getMongoDb } from '@/lib/db';
+import { verifyToken } from '@/lib/auth';
 
 export async function GET(request: NextRequest) {
   try {
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -13,15 +16,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Lấy lịch sử giao dịch (deposits và withdrawals)
-    const deposits = await User.find({}, { password: 0 })
+    const deposits = await db.collection('deposits')
+      .find({}, { projection: { password: 0 } })
       .sort({ createdAt: -1 })
       .limit(50)
-      .lean();
+      .toArray();
 
-    const withdrawals = await User.find({}, { password: 0 })
+    const withdrawals = await db.collection('withdrawals')
+      .find({}, { projection: { password: 0 } })
       .sort({ createdAt: -1 })
       .limit(50)
-      .lean();
+      .toArray();
 
     // Kết hợp và format dữ liệu
     const transactions = [

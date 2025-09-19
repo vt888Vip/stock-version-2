@@ -84,11 +84,18 @@ export class TradingScheduler {
     this.isRunning = true;
     this.metrics.uptime = Date.now();
 
-    // ✅ RECOVERY: Load existing sessions from database
+    console.log('🚀 [SCHEDULER] Starting TradingScheduler...');
+
+    // ✅ STEP 1: Kiểm tra và tạo 30 sessions nếu chưa có
+    await this.ensureFutureSessions();
+
+    // ✅ STEP 2: Recovery existing sessions from database
     await this.recoverExistingSessions();
 
-    // Start monitoring
+    // ✅ STEP 3: Start monitoring
     this.startMonitoring();
+
+    console.log('✅ [SCHEDULER] TradingScheduler started successfully');
   }
 
   /**
@@ -102,6 +109,124 @@ export class TradingScheduler {
     this.isRunning = false;
     preciseTimerService.cleanup();
     sessionLifecycleManager.cleanup();
+  }
+
+  /**
+   * Ensure 30 future sessions exist in database
+   */
+  private async ensureFutureSessions(): Promise<void> {
+    try {
+      const db = await getMongoDb();
+      if (!db) {
+        throw new Error('Database connection failed');
+      }
+
+      const now = new Date();
+      
+      // Đếm số sessions tương lai hiện có
+      const futureSessionsCount = await db.collection('trading_sessions').countDocuments({
+        startTime: { $gt: now },
+        status: 'PENDING'
+      });
+
+      console.log(`📊 [SCHEDULER] Found ${futureSessionsCount} future sessions in database`);
+
+      // Nếu chưa có đủ 30 sessions, tạo mới
+      if (futureSessionsCount < 30) {
+        const sessionsToCreate = 30 - futureSessionsCount;
+        console.log(`🔄 [SCHEDULER] Creating ${sessionsToCreate} future sessions...`);
+        
+        await this.createInitialFutureSessions(sessionsToCreate);
+        console.log(`✅ [SCHEDULER] Created ${sessionsToCreate} future sessions`);
+      } else {
+        console.log(`✅ [SCHEDULER] Already have ${futureSessionsCount} future sessions`);
+      }
+    } catch (error) {
+      console.error('❌ [SCHEDULER] Failed to ensure future sessions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Create initial future sessions
+   */
+  private async createInitialFutureSessions(count: number): Promise<void> {
+    try {
+      const db = await getMongoDb();
+      if (!db) {
+        throw new Error('Database connection failed');
+      }
+
+      const now = new Date();
+      
+      // Bắt đầu từ phút tiếp theo
+      const currentMinute = new Date(Date.UTC(
+        now.getUTCFullYear(), 
+        now.getUTCMonth(), 
+        now.getUTCDate(), 
+        now.getUTCHours(), 
+        now.getUTCMinutes()
+      ));
+      const nextMinute = new Date(currentMinute.getTime() + 60000);
+
+      // Tạo các sessions mới
+      const newSessions = [];
+      
+      for (let i = 0; i < count; i++) {
+        const sessionStartTime = new Date(nextMinute.getTime() + (i * 60000));
+        const sessionEndTime = new Date(sessionStartTime.getTime() + 60000);
+        const sessionId = this.generateSessionId(sessionStartTime);
+        const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
+        
+        newSessions.push({
+          sessionId,
+          startTime: sessionStartTime,
+          endTime: sessionEndTime,
+          status: 'PENDING',
+          result: result,
+          schedulerStatus: 'PENDING',
+          tradeWindowOpen: false,
+          settlementScheduled: false,
+          processingComplete: false,
+          totalTrades: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWinAmount: 0,
+          totalLossAmount: 0,
+          createdBy: 'scheduler',
+          createdAt: new Date(),
+          updatedAt: new Date()
+        });
+      }
+
+      if (newSessions.length > 0) {
+        // ✅ FIX: Sử dụng upsert để tránh duplicate key error
+        for (const session of newSessions) {
+          await db.collection('trading_sessions').updateOne(
+            { sessionId: session.sessionId },
+            { $set: session },
+            { upsert: true }
+          );
+        }
+        console.log(`✅ [SCHEDULER] Upserted ${newSessions.length} future sessions into database`);
+      }
+    } catch (error) {
+      console.error('❌ [SCHEDULER] Failed to create initial future sessions:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Generate session ID from date
+   */
+  private generateSessionId(date: Date): string {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hour = String(date.getUTCHours()).padStart(2, '0');
+    const minute = String(date.getUTCMinutes()).padStart(2, '0');
+    
+    return `${year}${month}${day}${hour}${minute}`;
   }
 
   /**
@@ -528,6 +653,11 @@ export class TradingScheduler {
     setInterval(() => {
       this.autoRecovery();
     }, 10 * 1000);
+
+    // ✅ MAINTAIN 30 SESSIONS: Kiểm tra và duy trì 30 sessions mỗi 30 giây
+    setInterval(() => {
+      this.maintainFutureSessions();
+    }, 30 * 1000);
   }
 
   /**
@@ -656,6 +786,123 @@ export class TradingScheduler {
       
     } catch (error) {
       console.error(`❌ [SCHEDULER] Auto-recovery failed:`, error);
+    }
+  }
+
+  /**
+   * Maintain 30 future sessions
+   */
+  private async maintainFutureSessions(): Promise<void> {
+    try {
+      const db = await getMongoDb();
+      if (!db) {
+        console.error('❌ [SCHEDULER] Database connection failed during maintain future sessions');
+        return;
+      }
+
+      const now = new Date();
+      
+      // Đếm số sessions tương lai hiện có
+      const futureSessionsCount = await db.collection('trading_sessions').countDocuments({
+        startTime: { $gt: now },
+        status: 'PENDING'
+      });
+
+      console.log(`📊 [SCHEDULER] Current future sessions: ${futureSessionsCount}/30`);
+
+      // Nếu chưa đủ 30 sessions, tạo thêm
+      if (futureSessionsCount < 30) {
+        const sessionsToCreate = 30 - futureSessionsCount;
+        console.log(`🔄 [SCHEDULER] Creating ${sessionsToCreate} additional future sessions`);
+        
+        await this.createAdditionalFutureSessions(sessionsToCreate);
+      }
+    } catch (error) {
+      console.error('❌ [SCHEDULER] Maintain future sessions failed:', error);
+    }
+  }
+
+  /**
+   * Create additional future sessions
+   */
+  private async createAdditionalFutureSessions(count: number): Promise<void> {
+    try {
+      const db = await getMongoDb();
+      if (!db) {
+        throw new Error('Database connection failed');
+      }
+
+      const now = new Date();
+      
+      // Tìm session cuối cùng để tính thời gian bắt đầu
+      const lastSession = await db.collection('trading_sessions')
+        .find({
+          startTime: { $gt: now }
+        })
+        .sort({ startTime: -1 })
+        .limit(1)
+        .toArray();
+
+      let nextStartTime: Date;
+      
+      if (lastSession.length > 0) {
+        // Bắt đầu từ session cuối cùng + 1 phút
+        nextStartTime = new Date(lastSession[0].endTime);
+      } else {
+        // Bắt đầu từ phút tiếp theo
+        const currentMinute = new Date(Date.UTC(
+          now.getUTCFullYear(), 
+          now.getUTCMonth(), 
+          now.getUTCDate(), 
+          now.getUTCHours(), 
+          now.getUTCMinutes()
+        ));
+        nextStartTime = new Date(currentMinute.getTime() + 60000);
+      }
+
+      // Tạo các sessions mới
+      const newSessions = [];
+      
+      for (let i = 0; i < count; i++) {
+        const sessionStartTime = new Date(nextStartTime.getTime() + (i * 60000));
+        const sessionEndTime = new Date(sessionStartTime.getTime() + 60000);
+        const sessionId = this.generateSessionId(sessionStartTime);
+        const result = Math.random() < 0.5 ? 'UP' : 'DOWN';
+        
+        newSessions.push({
+          sessionId,
+          startTime: sessionStartTime,
+          endTime: sessionEndTime,
+          status: 'PENDING',
+          result: result,
+          schedulerStatus: 'PENDING',
+          tradeWindowOpen: false,
+          settlementScheduled: false,
+          processingComplete: false,
+          totalTrades: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWinAmount: 0,
+          totalLossAmount: 0,
+          createdBy: 'scheduler',
+          createdAt: new Date(),
+          updatedAt: new Date()
+        });
+      }
+
+      if (newSessions.length > 0) {
+        // ✅ FIX: Sử dụng upsert để tránh duplicate key error
+        for (const session of newSessions) {
+          await db.collection('trading_sessions').updateOne(
+            { sessionId: session.sessionId },
+            { $set: session },
+            { upsert: true }
+          );
+        }
+        console.log(`✅ [SCHEDULER] Upserted ${newSessions.length} additional future sessions`);
+      }
+    } catch (error) {
+      console.error('❌ [SCHEDULER] Failed to create additional future sessions:', error);
     }
   }
 

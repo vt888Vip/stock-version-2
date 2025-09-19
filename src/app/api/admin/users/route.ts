@@ -27,7 +27,6 @@ export async function GET(request: NextRequest) {
     const users = await db.collection('users')
       .find({})
       .sort({ createdAt: -1 })
-      .limit(50)
       .toArray();
 
     // Lấy thông tin số dư từ field balance
@@ -43,8 +42,7 @@ export async function GET(request: NextRequest) {
         role: user.role || 'user',
         balance: {
           available: availableBalance,
-          frozen: frozenBalance,
-          total: availableBalance + frozenBalance
+          frozen: frozenBalance
         },
         status: user.status || { active: true, betLocked: false, withdrawLocked: false },
         verification: user.verification || { verified: false },

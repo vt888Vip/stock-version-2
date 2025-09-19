@@ -209,9 +209,12 @@ export class SchedulerService {
 // Singleton instance
 export const schedulerService = new SchedulerService();
 
-// Auto-initialize when module is imported
+// Auto-initialize and start when module is imported
 if (typeof window === 'undefined') { // Only on server side
-  schedulerService.initialize().catch(error => {
-    console.error('❌ [SCHEDULER-SERVICE] Auto-initialization failed:', error);
+  schedulerService.initialize().then(() => {
+    // Auto-start scheduler after initialization
+    return schedulerService.start();
+  }).catch(error => {
+    console.error('❌ [SCHEDULER-SERVICE] Auto-initialization/start failed:', error);
   });
 }

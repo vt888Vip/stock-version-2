@@ -153,8 +153,17 @@ export default function TradePage() {
   // ✅ FIX: State để track sequence number cho socket events
   const [lastSequence, setLastSequence] = useState(0);
 
-  // ✅ FIX: Fetch balance từ server thay vì tự tính
+  // ✅ FIX: Fetch balance từ server với lock để tránh race condition
+  const [isBalanceFetching, setIsBalanceFetching] = useState(false);
+  
   const fetchBalanceFromServer = async () => {
+    // ✅ FIX: Tránh multiple concurrent fetches
+    if (isBalanceFetching) {
+      console.log('⏳ [BALANCE] Already fetching balance, skipping...');
+      return;
+    }
+    
+    setIsBalanceFetching(true);
     try {
       const res = await fetch('/api/user/balance', {
         headers: {
@@ -166,9 +175,12 @@ export default function TradePage() {
       if (data.success) {
         setBalance(data.balance.available);
         setFrozenBalance(data.balance.frozen);
+        console.log('💰 [BALANCE] Updated from server:', data.balance.available);
       }
     } catch (error) {
       console.error('❌ [BALANCE SYNC] Error fetching balance:', error);
+    } finally {
+      setIsBalanceFetching(false);
     }
   };
 
@@ -222,14 +234,14 @@ export default function TradePage() {
         }
       });
       
-      // ✅ FIX: Debounce fetch balance từ server
+      // ✅ FIX: Debounce fetch balance từ server (tăng delay để tránh race condition)
       if (balanceUpdateTimeout) {
         clearTimeout(balanceUpdateTimeout);
       }
       
       const timeout = setTimeout(() => {
         fetchBalanceFromServer();
-      }, 500); // Debounce 500ms
+      }, 1000); // Debounce 1 giây để tránh race condition
       
       setBalanceUpdateTimeout(timeout);
     };
@@ -447,23 +459,32 @@ export default function TradePage() {
     };
   }, [lastSequence]);
 
-  // ✅ FIX: Reconnection handling - fetch balance khi socket reconnect
+  // ✅ FIX: Reconnection handling - fetch balance khi socket reconnect (với delay)
   useEffect(() => {
     if (socket?.connected) {
-      // console.log('🔄 Socket reconnected, fetching balance from server');
-      fetchBalanceFromServer();
+      // Delay 2 giây để tránh conflict với Socket.IO events
+      const timeout = setTimeout(() => {
+        console.log('🔄 Socket reconnected, fetching balance from server');
+        fetchBalanceFromServer();
+      }, 2000);
+      
+      return () => clearTimeout(timeout);
     }
   }, [socket?.connected]);
 
-  // ✅ FIX: Periodic sync - fetch balance mỗi 30 giây để đảm bảo đồng bộ
+  // ✅ FIX: Periodic sync - fetch balance mỗi 60 giây để đảm bảo đồng bộ (giảm frequency)
   useEffect(() => {
     const interval = setInterval(() => {
-      // console.log('🔄 Periodic balance sync');
-      fetchBalanceFromServer();
-    }, 30000); // Sync mỗi 30 giây
+      // Chỉ sync nếu không có Socket.IO events gần đây
+      const timeSinceLastSync = Date.now() - lastBalanceSync;
+      if (timeSinceLastSync > 30000) { // Chỉ sync nếu > 30s không có update
+        console.log('🔄 Periodic balance sync (no recent updates)');
+        fetchBalanceFromServer();
+      }
+    }, 60000); // Sync mỗi 60 giây
     
     return () => clearInterval(interval);
-  }, []);
+  }, [lastBalanceSync]);
 
   // Load user balance and current session
   useEffect(() => {
@@ -568,136 +589,136 @@ export default function TradePage() {
     }
   }, [authLoading, user]);
 
-  // ✅ TỐI ƯU: Smart polling cho session updates
-  useEffect(() => {
-    // ✅ TẠM DỪNG POLLING: Không polling khi đang đặt lệnh
-    if (isPlacingTrade) {
-      // console.log('⏸️ Tạm dừng session polling - đang đặt lệnh');
-      return;
-    }
+  // ✅ COMMENTED: Tạm dừng timer polling để test Scheduler timer
+  // useEffect(() => {
+  //   // ✅ TẠM DỪNG POLLING: Không polling khi đang đặt lệnh
+  //   if (isPlacingTrade) {
+  //     // console.log('⏸️ Tạm dừng session polling - đang đặt lệnh');
+  //     return;
+  //   }
 
-    const updateSession = async () => {
-      try {
-        // ✅ SỬ DỤNG MONITORING: Wrap API call với performance tracking
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 giây timeout
-        
-        const sessionResponse = await fetch('/api/trading-sessions/session-change', {
-          signal: controller.signal,
-          headers: {
-            'Cache-Control': 'no-cache',
-            'Pragma': 'no-cache'
-          }
-        });
-        
-        clearTimeout(timeoutId);
-        
-        if (!sessionResponse.ok) {
-          throw new Error(`Session update failed: ${sessionResponse.status} ${sessionResponse.statusText}`);
-        }
-        
-        const sessionData = await sessionResponse.json();
-        
-        if (sessionData.success) {
-            const newSessionId = sessionData.currentSession.sessionId;
-            const newTimeLeft = sessionData.currentSession.timeLeft;
-            const sessionChanged = sessionData.sessionChanged;
-            
-            // ✅ UPDATE STATE: Cập nhật state khi có session mới
-            if (sessionChanged || newSessionId !== currentSessionId) {
-              setCurrentSessionId(newSessionId);
-              setTimeLeft(newTimeLeft);
-            }
-            
-            // ✅ SCHEDULER TIMER: Không cập nhật timeLeft từ polling nữa
-            // Scheduler sẽ gửi timer updates qua Socket.IO
-            // if (sessionChanged || newSessionId !== currentSessionId) {
-            //   setTimeLeft(newTimeLeft);
-            // }
-            
-            // Nếu phiên thay đổi, cập nhật sessionId và reset các trạng thái
-            if (sessionChanged || newSessionId !== currentSessionId) {
-              setCurrentSessionId(newSessionId);
-              
-              // Reset các trạng thái liên quan khi session mới bắt đầu
-              setTradeResults([]); // ✅ SỬA: Reset trade results khi bắt đầu phiên mới
-              setTradesInCurrentSession(0); // Reset số lệnh trong phiên mới
-              // console.log('🔄 Phiên mới bắt đầu:', newSessionId);
-            }
-            
-            setSessionStatus(sessionData.currentSession.status);
-          }
-      } catch (error) {
-        if (error instanceof Error) {
-          if (error.name === 'AbortError') {
-            console.warn('⏰ Session update timeout - có thể do mạng chậm');
-          } else if (error.message.includes('Failed to fetch')) {
-            console.warn('🌐 Lỗi kết nối mạng - kiểm tra kết nối internet');
-          } else {
-            console.error('❌ Lỗi khi cập nhật phiên:', error);
-          }
-        } else {
-          console.error('❌ Lỗi không xác định khi cập nhật phiên:', error);
-        }
-        
-        // ✅ FALLBACK: Sử dụng API backup nếu session-change fail
-        try {
-          const fallbackResponse = await fetch('/api/trading-sessions');
-          if (fallbackResponse.ok) {
-            const fallbackData = await fallbackResponse.json();
-            if (fallbackData.success) {
-              // ✅ SỬA: Chỉ cập nhật sessionId, không ghi đè timeLeft
-              setCurrentSessionId(fallbackData.currentSession.sessionId);
-              setSessionStatus(fallbackData.currentSession.status);
-              // console.log('✅ Sử dụng fallback API thành công');
-            }
-          }
-        } catch (fallbackError) {
-          console.error('❌ Fallback API cũng thất bại:', fallbackError);
-        }
-      }
-    };
-    
-    // Update immediately
-    updateSession();
-    
-    // ✅ SMART POLLING: Tối ưu polling dựa trên trạng thái
-    let interval;
-    let retryCount = 0;
-    const maxRetries = 3;
-    
-    const smartUpdateSession = async () => {
-      try {
-        await updateSession();
-        retryCount = 0; // Reset retry count khi thành công
-      } catch (error) {
-        retryCount++;
-        if (retryCount >= maxRetries) {
-          console.warn(`⚠️ Đã thử ${maxRetries} lần, tạm dừng polling trong 30 giây`);
-          setTimeout(() => {
-            retryCount = 0;
-            updateSession();
-          }, 30000);
-          return;
-        }
-      }
-    };
-    
-    // ✅ SỬA: Tối ưu polling để không gây conflict với local timer
-    if (timeLeft <= 0) {
-      interval = 3000; // Poll mỗi 3 giây khi timer = 0 (chờ phiên mới)
-    } else if (timeLeft <= 5) {
-      interval = 15000; // Poll mỗi 15 giây khi gần về 0 (giảm frequency)
-    } else if (timeLeft <= 30) {
-      interval = 30000; // Poll mỗi 30 giây khi còn ít thời gian
-    } else {
-      interval = 60000; // Poll mỗi 60 giây khi còn nhiều thời gian (giảm frequency)
-    }
-    
-    const sessionInterval = setInterval(smartUpdateSession, interval);
-    
-    return () => clearInterval(sessionInterval);
-  }, [currentSessionId, timeLeft, isPlacingTrade]); // ✅ Thêm isPlacingTrade vào dependency
+  //   const updateSession = async () => {
+  //     try {
+  //       // ✅ SỬ DỤNG MONITORING: Wrap API call với performance tracking
+  //       const controller = new AbortController();
+  //       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 giây timeout
+  //       
+  //       const sessionResponse = await fetch('/api/trading-sessions/session-change', {
+  //         signal: controller.signal,
+  //         headers: {
+  //           'Cache-Control': 'no-cache',
+  //           'Pragma': 'no-cache'
+  //         }
+  //       });
+  //       
+  //       clearTimeout(timeoutId);
+  //       
+  //       if (!sessionResponse.ok) {
+  //         throw new Error(`Session update failed: ${sessionResponse.status} ${sessionResponse.statusText}`);
+  //       }
+  //       
+  //       const sessionData = await sessionResponse.json();
+  //       
+  //       if (sessionData.success) {
+  //           const newSessionId = sessionData.currentSession.sessionId;
+  //           const newTimeLeft = sessionData.currentSession.timeLeft;
+  //           const sessionChanged = sessionData.sessionChanged;
+  //           
+  //           // ✅ UPDATE STATE: Cập nhật state khi có session mới
+  //           if (sessionChanged || newSessionId !== currentSessionId) {
+  //             setCurrentSessionId(newSessionId);
+  //             setTimeLeft(newTimeLeft);
+  //           }
+  //           
+  //           // ✅ SCHEDULER TIMER: Không cập nhật timeLeft từ polling nữa
+  //           // Scheduler sẽ gửi timer updates qua Socket.IO
+  //           // if (sessionChanged || newSessionId !== currentSessionId) {
+  //           //   setTimeLeft(newTimeLeft);
+  //           // }
+  //           
+  //           // Nếu phiên thay đổi, cập nhật sessionId và reset các trạng thái
+  //           if (sessionChanged || newSessionId !== currentSessionId) {
+  //             setCurrentSessionId(newSessionId);
+  //             
+  //             // Reset các trạng thái liên quan khi session mới bắt đầu
+  //             setTradeResults([]); // ✅ SỬA: Reset trade results khi bắt đầu phiên mới
+  //             setTradesInCurrentSession(0); // Reset số lệnh trong phiên mới
+  //             // console.log('🔄 Phiên mới bắt đầu:', newSessionId);
+  //           }
+  //           
+  //           setSessionStatus(sessionData.currentSession.status);
+  //         }
+  //     } catch (error) {
+  //       if (error instanceof Error) {
+  //         if (error.name === 'AbortError') {
+  //           console.warn('⏰ Session update timeout - có thể do mạng chậm');
+  //         } else if (error.message.includes('Failed to fetch')) {
+  //           console.warn('🌐 Lỗi kết nối mạng - kiểm tra kết nối internet');
+  //         } else {
+  //           console.error('❌ Lỗi khi cập nhật phiên:', error);
+  //         }
+  //       } else {
+  //         console.error('❌ Lỗi không xác định khi cập nhật phiên:', error);
+  //       }
+  //       
+  //       // ✅ FALLBACK: Sử dụng API backup nếu session-change fail
+  //       try {
+  //         const fallbackResponse = await fetch('/api/trading-sessions');
+  //         if (fallbackResponse.ok) {
+  //           const fallbackData = await fallbackResponse.json();
+  //           if (fallbackData.success) {
+  //             // ✅ SỬA: Chỉ cập nhật sessionId, không ghi đè timeLeft
+  //             setCurrentSessionId(fallbackData.currentSession.sessionId);
+  //             setSessionStatus(fallbackData.currentSession.status);
+  //             // console.log('✅ Sử dụng fallback API thành công');
+  //           }
+  //         }
+  //       } catch (fallbackError) {
+  //         console.error('❌ Fallback API cũng thất bại:', fallbackError);
+  //       }
+  //     }
+  //   };
+  //   
+  //   // Update immediately
+  //   updateSession();
+  //   
+  //   // ✅ SMART POLLING: Tối ưu polling dựa trên trạng thái
+  //   let interval;
+  //   let retryCount = 0;
+  //   const maxRetries = 3;
+  //   
+  //   const smartUpdateSession = async () => {
+  //     try {
+  //       await updateSession();
+  //       retryCount = 0; // Reset retry count khi thành công
+  //     } catch (error) {
+  //       retryCount++;
+  //       if (retryCount >= maxRetries) {
+  //         console.warn(`⚠️ Đã thử ${maxRetries} lần, tạm dừng polling trong 30 giây`);
+  //         setTimeout(() => {
+  //           retryCount = 0;
+  //           updateSession();
+  //         }, 30000);
+  //         return;
+  //       }
+  //     }
+  //   };
+  //   
+  //   // ✅ SỬA: Tối ưu polling để không gây conflict với local timer
+  //   if (timeLeft <= 0) {
+  //     interval = 3000; // Poll mỗi 3 giây khi timer = 0 (chờ phiên mới)
+  //   } else if (timeLeft <= 5) {
+  //     interval = 15000; // Poll mỗi 15 giây khi gần về 0 (giảm frequency)
+  //   } else if (timeLeft <= 30) {
+  //     interval = 30000; // Poll mỗi 30 giây khi còn ít thời gian
+  //   } else {
+  //     interval = 60000; // Poll mỗi 60 giây khi còn nhiều thời gian (giảm frequency)
+  //   }
+  //   
+  //   const sessionInterval = setInterval(smartUpdateSession, interval);
+  //   
+  //   return () => clearInterval(sessionInterval);
+  // }, [currentSessionId, timeLeft, isPlacingTrade]); // ✅ Thêm isPlacingTrade vào dependency
 
   // ✅ SCHEDULER TIMER: Nhận timer updates từ Scheduler thay vì local timer
   useEffect(() => {
@@ -760,20 +781,40 @@ export default function TradePage() {
   useEffect(() => {
     const handleTradeWindowOpened = (event: CustomEvent) => {
       const data = event.detail;
-      console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
-      console.log('📈 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-      console.log('📈 [FRONTEND-SCHEDULER] Trade window opened at:', data.timestamp);
-      console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
-      // Có thể cập nhật UI state nếu cần
+      // ✅ FIX: Chỉ log 1 lần để tránh spam
+      if (!processedTradesRef.current.has(`trade_window_opened_${data.sessionId}_${data.timestamp}`)) {
+        console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
+        console.log('📈 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        console.log('📈 [FRONTEND-SCHEDULER] Trade window opened at:', data.timestamp);
+        console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
+        
+        // Đánh dấu đã xử lý
+        processedTradesRef.current.add(`trade_window_opened_${data.sessionId}_${data.timestamp}`);
+        
+        // Cleanup sau 5 giây
+        setTimeout(() => {
+          processedTradesRef.current.delete(`trade_window_opened_${data.sessionId}_${data.timestamp}`);
+        }, 5000);
+      }
     };
 
     const handleTradeWindowClosed = (event: CustomEvent) => {
       const data = event.detail;
-      console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
-      console.log('📉 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-      console.log('📉 [FRONTEND-SCHEDULER] Trade window closed at:', data.timestamp);
-      console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
-      // Có thể cập nhật UI state nếu cần
+      // ✅ FIX: Chỉ log 1 lần để tránh spam
+      if (!processedTradesRef.current.has(`trade_window_closed_${data.sessionId}_${data.timestamp}`)) {
+        console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
+        console.log('📉 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        console.log('📉 [FRONTEND-SCHEDULER] Trade window closed at:', data.timestamp);
+        console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
+        
+        // Đánh dấu đã xử lý
+        processedTradesRef.current.add(`trade_window_closed_${data.sessionId}_${data.timestamp}`);
+        
+        // Cleanup sau 5 giây
+        setTimeout(() => {
+          processedTradesRef.current.delete(`trade_window_closed_${data.sessionId}_${data.timestamp}`);
+        }, 5000);
+      }
     };
 
     const handleSettlementTriggered = (event: CustomEvent) => {
@@ -782,21 +823,42 @@ export default function TradePage() {
 
     const handleSettlementCompleted = (event: CustomEvent) => {
       const data = event.detail;
-      console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
-      console.log('✅ [FRONTEND-SCHEDULER] Session:', data.sessionId);
-      console.log('✅ [FRONTEND-SCHEDULER] Total wins:', data.totalWins);
-      console.log('✅ [FRONTEND-SCHEDULER] Total losses:', data.totalLosses);
-      console.log('✅ [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
-      console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+      // ✅ FIX: Chỉ log 1 lần để tránh spam
+      if (!processedTradesRef.current.has(`settlement_completed_${data.sessionId}_${data.timestamp}`)) {
+        console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+        console.log('✅ [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        console.log('✅ [FRONTEND-SCHEDULER] Total wins:', data.totalWins);
+        console.log('✅ [FRONTEND-SCHEDULER] Total losses:', data.totalLosses);
+        console.log('✅ [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
+        console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+        
+        // Đánh dấu đã xử lý
+        processedTradesRef.current.add(`settlement_completed_${data.sessionId}_${data.timestamp}`);
+        
+        // Cleanup sau 5 giây
+        setTimeout(() => {
+          processedTradesRef.current.delete(`settlement_completed_${data.sessionId}_${data.timestamp}`);
+        }, 5000);
+      }
     };
 
     const handleSessionCompleted = (event: CustomEvent) => {
       const data = event.detail;
-      console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
-      console.log('🏁 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-      console.log('🏁 [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
-      console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
-      // Có thể cập nhật UI state nếu cần
+      // ✅ FIX: Chỉ log 1 lần để tránh spam
+      if (!processedTradesRef.current.has(`session_completed_${data.sessionId}_${data.timestamp}`)) {
+        console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+        console.log('🏁 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        console.log('🏁 [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
+        console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+        
+        // Đánh dấu đã xử lý
+        processedTradesRef.current.add(`session_completed_${data.sessionId}_${data.timestamp}`);
+        
+        // Cleanup sau 5 giây
+        setTimeout(() => {
+          processedTradesRef.current.delete(`session_completed_${data.sessionId}_${data.timestamp}`);
+        }, 5000);
+      }
     };
 
     // Add event listeners
@@ -1075,10 +1137,11 @@ export default function TradePage() {
 
         // Trade placed successfully
 
-        // ✅ CẬP NHẬT BALANCE NGAY (Optimistic UI)
-        const tradeAmount = Number(amount);
-        setBalance(prev => prev - tradeAmount);
-        setFrozenBalance(prev => prev + tradeAmount);
+        // ✅ FIX: KHÔNG cập nhật balance optimistic nữa để tránh race condition
+        // Balance sẽ được cập nhật từ server qua Socket.IO events
+        // const tradeAmount = Number(amount);
+        // setBalance(prev => prev - tradeAmount);
+        // setFrozenBalance(prev => prev + tradeAmount);
         
         // Socket.IO event sẽ được gửi từ server
       }

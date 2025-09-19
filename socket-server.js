@@ -139,6 +139,18 @@ const sendToUser = (userId, event, data) => {
       return true;
     }
     
+    // ✅ THÊM: Hỗ trợ gửi event chỉ đến admin users
+    if (userId === 'admin') {
+      console.log(`👑 [SOCKET] Sending ${event} to admin users only`);
+      // Gửi đến tất cả users có role admin
+      io.emit(event, {
+        ...data,
+        timestamp: new Date().toISOString(),
+        target: 'admin'
+      });
+      return true;
+    }
+    
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
     

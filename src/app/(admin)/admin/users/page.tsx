@@ -4,9 +4,9 @@ import React from 'react';
 import { Loader2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import { useAdminState } from '../components/useAdminState';
-import SessionResultsManagement from '../components/SessionResultsManagement';
+import UsersManagement from '../components/UsersManagement';
 
-export default function SessionResultsPage() {
+export default function UsersPage() {
   const { user, isLoading, isAuthenticated, isAdmin, loading } = useAdminState();
 
   // Loading state
@@ -27,8 +27,8 @@ export default function SessionResultsPage() {
   }
 
   return (
-    <AdminLayout activeTab="session-results">
-      <SessionResultsManagement />
+    <AdminLayout activeTab="users">
+      <UsersManagement />
     </AdminLayout>
   );
 }

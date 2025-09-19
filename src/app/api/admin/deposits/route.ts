@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST: Duyệt yêu cầu nạp tiền
+// POST: Duyệt yêu cầu nạp tiền hoặc nạp tiền thủ công
 export async function POST(req: NextRequest) {
   try {
     // Xác thực admin
@@ -88,6 +88,78 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json();
+    
+    console.log('Received request body:', body);
+    
+    // Kiểm tra xem có phải nạp tiền thủ công không
+    if (body.userId && body.amount) {
+      // Nạp tiền thủ công
+      const { userId, amount, note } = body;
+      
+      console.log('Manual deposit - userId:', userId, 'amount:', amount, 'note:', note);
+      
+      if (!userId || !amount) {
+        console.log('Missing required fields - userId:', userId, 'amount:', amount);
+        return NextResponse.json({ message: 'Thiếu thông tin cần thiết' }, { status: 400 });
+      }
+
+      // Validate amount
+      const amountValue = parseFloat(amount);
+      if (isNaN(amountValue) || amountValue <= 0) {
+        return NextResponse.json({ message: 'Số tiền không hợp lệ' }, { status: 400 });
+      }
+
+      // Kiểm tra user tồn tại
+      const user = await db.collection('users').findOne({ _id: new ObjectId(userId) });
+      if (!user) {
+        console.log('User not found for ID:', userId);
+        return NextResponse.json({ message: 'Không tìm thấy người dùng' }, { status: 404 });
+      }
+
+      console.log('Found user:', user.username);
+
+      // Tính balance mới
+      const userBalance = user.balance || { available: 0, frozen: 0 };
+      const currentAvailable = typeof userBalance === 'number' ? userBalance : userBalance.available || 0;
+      const newAvailableBalance = currentAvailable + amountValue;
+
+      console.log('Balance update - current:', currentAvailable, 'new:', newAvailableBalance);
+
+      // Cộng tiền vào tài khoản người dùng
+      await db.collection('users').updateOne(
+        { _id: new ObjectId(userId) },
+        { 
+          $set: { 
+            balance: {
+              available: newAvailableBalance,
+              frozen: typeof userBalance === 'number' ? 0 : userBalance.frozen || 0
+            },
+            updatedAt: new Date()
+          }
+        }
+      );
+
+      // Tạo giao dịch
+      await db.collection('transactions').insertOne({
+        userId: new ObjectId(userId),
+        username: user.username,
+        type: 'deposit',
+        amount: amountValue,
+        status: 'completed',
+        note: `Nạp tiền thủ công - ${note || 'Được nạp bởi admin'}`,
+        createdAt: new Date()
+      });
+
+      console.log('Manual deposit completed successfully');
+
+      return NextResponse.json({ 
+        message: 'Đã nạp tiền thành công',
+        userId: userId,
+        amount: amountValue
+      });
+    }
+
+    // Xử lý duyệt/từ chối yêu cầu nạp tiền
     const { depositId, action, note } = body; // action: 'approve' | 'reject'
 
     if (!depositId || !action) {
@@ -124,20 +196,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ message: 'Không tìm thấy người dùng' }, { status: 404 });
       }
 
-      // ✅ CHUẨN HÓA: Luôn sử dụng balance dạng object
-      let userBalance = userData.balance || { available: 0, frozen: 0 };
-      
-      // Nếu balance là number (kiểu cũ), chuyển đổi thành object
-      if (typeof userBalance === 'number') {
-        userBalance = {
-          available: userBalance,
-          frozen: 0
-        };
-        
-        console.log(`🔄 [DEPOSIT MIGRATION] User ${userData.username}: Chuyển đổi balance từ number sang object`);
-      }
-      
-      const currentAvailable = userBalance.available || 0;
+      // Tính balance mới
+      const userBalance = userData.balance || { available: 0, frozen: 0 };
+      const currentAvailable = typeof userBalance === 'number' ? userBalance : userBalance.available || 0;
       const newAvailableBalance = currentAvailable + deposit.amount;
 
       // Cộng tiền vào tài khoản người dùng
@@ -147,7 +208,7 @@ export async function POST(req: NextRequest) {
           $set: { 
             balance: {
               available: newAvailableBalance,
-              frozen: userBalance.frozen || 0
+              frozen: typeof userBalance === 'number' ? 0 : userBalance.frozen || 0
             },
             updatedAt: new Date()
           }

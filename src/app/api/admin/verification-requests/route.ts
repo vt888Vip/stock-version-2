@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/auth';
-import { connectToDatabase } from '@/lib/db';
-import User from '@/models/User';
+import { ObjectId } from 'mongodb';
+import { getMongoDb } from '@/lib/db';
 
 interface UserDocument {
-  _id: string;
+  _id: ObjectId;
   username: string;
   fullName?: string;
   verification?: {
@@ -29,10 +29,13 @@ export async function GET(req: NextRequest) {
     }
 
     // Kết nối database
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Lấy danh sách người dùng đã upload đủ 2 ảnh nhưng chưa được xác minh
-    const requests: UserDocument[] = await User.aggregate([
+    const requests: UserDocument[] = await db.collection('users').aggregate([
       {
         $match: {
           'verification.cccdFront': { $exists: true, $ne: '' },
@@ -51,7 +54,7 @@ export async function GET(req: NextRequest) {
         }
       },
       { $sort: { updatedAt: -1 } }
-    ]);
+    ]).toArray();
 
     return NextResponse.json({
       success: true,
@@ -99,13 +102,23 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
+    if (!ObjectId.isValid(userId)) {
+      return NextResponse.json({
+        success: false,
+        message: 'ID người dùng không hợp lệ'
+      }, { status: 400 });
+    }
+
     // Kết nối database
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Cập nhật trạng thái xác minh
-    const result = await User.updateOne(
+    const result = await db.collection('users').updateOne(
       { 
-        _id: userId,
+        _id: new ObjectId(userId),
         'verification.cccdFront': { $exists: true, $ne: '' },
         'verification.cccdBack': { $exists: true, $ne: '' }
       },

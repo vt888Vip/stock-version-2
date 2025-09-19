@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { connectToDatabase } from '@/lib/db';
-import Bank from '@/models/Bank';
+import { getMongoDb } from '@/lib/db';
+import { verifyToken } from '@/lib/auth';
+import { ObjectId } from 'mongodb';
 
 export async function GET(request: NextRequest) {
   try {
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -13,9 +17,10 @@ export async function GET(request: NextRequest) {
     }
 
     // Lấy danh sách ngân hàng
-    const banks = await Bank.find({})
+    const banks = await db.collection('banks')
+      .find({})
       .sort({ createdAt: -1 })
-      .lean();
+      .toArray();
 
     return NextResponse.json({
       banks
@@ -32,7 +37,10 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -52,7 +60,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Kiểm tra số tài khoản đã tồn tại chưa
-    const existingBank = await Bank.findOne({ accountNumber });
+    const existingBank = await db.collection('banks').findOne({ accountNumber });
     if (existingBank) {
       return NextResponse.json(
         { error: 'Số tài khoản đã tồn tại' },
@@ -61,19 +69,21 @@ export async function POST(request: NextRequest) {
     }
 
     // Tạo ngân hàng mới
-    const newBank = new Bank({
+    const newBank = {
       name,
       accountNumber,
       accountHolder,
       branch: branch || '',
-      status: 'active'
-    });
+      status: 'active',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
 
-    const savedBank = await newBank.save();
+    const result = await db.collection('banks').insertOne(newBank);
 
     return NextResponse.json({
       success: true,
-      bank: savedBank
+      bank: { ...newBank, _id: result.insertedId }
     });
     
   } catch (error) {
@@ -87,7 +97,10 @@ export async function POST(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -107,7 +120,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Kiểm tra ngân hàng có tồn tại không
-    const existingBank = await Bank.findById(_id);
+    const existingBank = await db.collection('banks').findOne({ _id: new ObjectId(_id) });
     if (!existingBank) {
       return NextResponse.json(
         { error: 'Ngân hàng không tồn tại' },
@@ -116,9 +129,9 @@ export async function PUT(request: NextRequest) {
     }
 
     // Kiểm tra số tài khoản đã tồn tại ở ngân hàng khác chưa
-    const duplicateBank = await Bank.findOne({
+    const duplicateBank = await db.collection('banks').findOne({
       accountNumber,
-      _id: { $ne: _id }
+      _id: { $ne: new ObjectId(_id) }
     });
     if (duplicateBank) {
       return NextResponse.json(
@@ -128,19 +141,21 @@ export async function PUT(request: NextRequest) {
     }
 
     // Cập nhật ngân hàng
-    const updatedBank = await Bank.findByIdAndUpdate(
-      _id,
-      {
-        name,
-        accountNumber,
-        accountHolder,
-        branch: branch || '',
-        status: status || 'active'
-      },
-      { new: true, runValidators: true }
+    const updateData = {
+      name,
+      accountNumber,
+      accountHolder,
+      branch: branch || '',
+      status: status || 'active',
+      updatedAt: new Date()
+    };
+
+    const result = await db.collection('banks').updateOne(
+      { _id: new ObjectId(_id) },
+      { $set: updateData }
     );
 
-    if (!updatedBank) {
+    if (result.matchedCount === 0) {
       return NextResponse.json(
         { error: 'Ngân hàng không tồn tại' },
         { status: 404 }
@@ -150,7 +165,7 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Cập nhật ngân hàng thành công',
-      bank: updatedBank
+      bank: { _id, ...updateData }
     });
     
   } catch (error) {
@@ -164,7 +179,10 @@ export async function PUT(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    await connectToDatabase();
+    const db = await getMongoDb();
+    if (!db) {
+      return NextResponse.json({ error: 'Database connection failed' }, { status: 500 });
+    }
     
     // Kiểm tra quyền admin
     const token = request.headers.get('authorization')?.replace('Bearer ', '');
@@ -183,7 +201,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     // Kiểm tra ngân hàng có tồn tại không
-    const existingBank = await Bank.findById(bankId);
+    const existingBank = await db.collection('banks').findOne({ _id: new ObjectId(bankId) });
     if (!existingBank) {
       return NextResponse.json(
         { error: 'Ngân hàng không tồn tại' },
@@ -195,9 +213,9 @@ export async function DELETE(request: NextRequest) {
     console.log(`🗑️ Xóa ngân hàng: ${existingBank.name} (${existingBank.accountNumber})`);
 
     // Xóa ngân hàng
-    const deletedBank = await Bank.findByIdAndDelete(bankId);
+    const result = await db.collection('banks').deleteOne({ _id: new ObjectId(bankId) });
 
-    if (!deletedBank) {
+    if (result.deletedCount === 0) {
       return NextResponse.json(
         { error: 'Không thể xóa ngân hàng' },
         { status: 500 }

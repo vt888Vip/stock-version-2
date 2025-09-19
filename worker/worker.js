@@ -486,6 +486,24 @@ async function processPlaceTrade(tradeData) {
         message: 'Lệnh đã được đặt thành công'
       });
 
+      // ✅ THÊM: Gửi balance:updated event khi đặt lệnh
+      await sendSocketEvent(userId, 'balance:updated', {
+        userId,
+        tradeId: result.tradeId,
+        balance: result.balance,
+        amount: -amount, // Số tiền bị trừ
+        message: `Đã đặt lệnh ${amount.toLocaleString()} VND`
+      });
+
+      // ✅ THÊM: Gửi balance:updated event chỉ đến admin
+      await sendSocketEvent('admin', 'balance:updated', {
+        userId,
+        tradeId: result.tradeId,
+        balance: result.balance,
+        amount: -amount, // Số tiền bị trừ
+        message: `User ${userId} đã đặt lệnh ${amount.toLocaleString()} VND`
+      });
+
       await sendSocketEvent(userId, 'trade:history:updated', {
         action: 'add',
         trade: {
@@ -898,6 +916,16 @@ async function processTrade(tradeData) {
         message: `Balance đã được cập nhật: ${isWin ? '+' : ''}${profit} VND`
       });
 
+      // ✅ THÊM: Gửi balance:updated event chỉ đến admin khi settlement
+      await sendSocketEvent('admin', 'balance:updated', {
+        userId,
+        tradeId,
+        profit: profit,
+        amount: amount,
+        result: isWin ? 'win' : 'lose',
+        message: `User ${userId} ${isWin ? 'thắng' : 'thua'} ${Math.abs(profit).toLocaleString()} VND`
+      });
+
       await sendSocketEvent(userId, 'trade:history:updated', {
         action: 'update',
         trade: {
@@ -956,13 +984,23 @@ async function processTrade(tradeData) {
  * Xử lý settlement (kết quả)
  */
 async function processSettlement(settlementData) {
+  const { sessionId } = settlementData;
+  
+  // ✅ FIX: Thêm Redis lock cho settlement để tránh race condition
+  const settlementLockKey = `settlement:${sessionId}`;
+  const lockAcquired = await acquireLock(settlementLockKey, 60000); // 60s timeout
+  
+  if (!lockAcquired) {
+    console.log(`❌ [SETTLEMENT] Không thể acquire lock cho session ${sessionId}`);
+    return { success: false, error: 'Settlement is being processed by another worker' };
+  }
+  
   const session = await mongoose.startSession();
   
   try {
     console.log(`🔄 [SETTLEMENT] Bắt đầu xử lý settlement: ${settlementData.id}`);
     
     const result = await session.withTransaction(async () => {
-      const { sessionId } = settlementData;
 
       // 1. Lấy kết quả có sẵn từ session
       const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
@@ -1030,36 +1068,48 @@ async function processSettlement(settlementData) {
           { session }
         );
 
-                 // ✅ ĐÚNG: Cập nhật balance khi xử lý settlement
-         if (isWin) {
-           // THẮNG: Trả lại tiền gốc + tiền thắng
-           await mongoose.connection.db.collection('users').updateOne(
-             { _id: trade.userId },
-             {
-               $inc: {
-                 'balance.frozen': -trade.amount,
-                 'balance.available': trade.amount + profit
+                 // ✅ FIX: Cập nhật balance với Redis lock cho từng user
+         const userLockKey = `user:${trade.userId}:balance`;
+         const userLockAcquired = await acquireLock(userLockKey, 10000); // 10s timeout
+         
+         if (!userLockAcquired) {
+           console.log(`❌ [SETTLEMENT] Không thể acquire lock cho user ${trade.userId}`);
+           continue; // Skip user này, xử lý user khác
+         }
+         
+         try {
+           if (isWin) {
+             // THẮNG: Trả lại tiền gốc + tiền thắng
+             await mongoose.connection.db.collection('users').updateOne(
+               { _id: trade.userId },
+               {
+                 $inc: {
+                   'balance.frozen': -trade.amount,
+                   'balance.available': trade.amount + profit
+                 },
+                 $set: {
+                   updatedAt: new Date()
+                 }
                },
-               $set: {
-                 updatedAt: new Date()
-               }
-             },
-             { session }
-           );
-         } else {
-           // THUA: Chỉ trừ frozen (mất tiền)
-           await mongoose.connection.db.collection('users').updateOne(
-             { _id: trade.userId },
-             {
-               $inc: {
-                 'balance.frozen': -trade.amount
+               { session }
+             );
+           } else {
+             // THUA: Chỉ trừ frozen (mất tiền)
+             await mongoose.connection.db.collection('users').updateOne(
+               { _id: trade.userId },
+               {
+                 $inc: {
+                   'balance.frozen': -trade.amount
+                 },
+                 $set: {
+                   updatedAt: new Date()
+                 }
                },
-               $set: {
-                 updatedAt: new Date()
-               }
-             },
-             { session }
-           );
+               { session }
+             );
+           }
+         } finally {
+           await releaseLock(userLockKey);
          }
 
         // Cập nhật thống kê
@@ -1180,6 +1230,8 @@ async function processSettlement(settlementData) {
     };
   } finally {
     await session.endSession();
+    // ✅ FIX: Release settlement lock
+    await releaseLock(settlementLockKey);
   }
 }
 
@@ -1215,7 +1267,22 @@ async function sendSocketEvent(userId, event, data) {
     }
 
     const result = await response.json();
-    console.log(`📡 [SOCKET] Event sent: ${event} to user ${userId} (seq: ${sequence})`, result);
+    
+    // ✅ DEBUG: Log chi tiết cho balance:updated events
+    if (event === 'balance:updated') {
+      const target = userId === 'all' ? 'ALL USERS' : userId === 'admin' ? 'ADMIN ONLY' : `user ${userId}`;
+      console.log(`💰 [SOCKET] Balance update sent: ${event} to ${target} (seq: ${sequence})`);
+      console.log(`💰 [SOCKET] Data:`, {
+        userId: data.userId,
+        tradeId: data.tradeId,
+        amount: data.amount,
+        profit: data.profit,
+        message: data.message
+      });
+    } else {
+      console.log(`📡 [SOCKET] Event sent: ${event} to user ${userId} (seq: ${sequence})`, result);
+    }
+    
     return result.success;
   } catch (error) {
     console.error(`❌ [SOCKET] Error sending event ${event}:`, error);

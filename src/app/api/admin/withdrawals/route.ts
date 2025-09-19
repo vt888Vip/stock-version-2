@@ -30,35 +30,14 @@ export async function GET(req: NextRequest) {
       .sort({ createdAt: -1 })
       .toArray();
 
-    // ✅ CHUẨN HÓA: Luôn sử dụng balance dạng object
+    // Thêm thông tin số dư user cho mỗi withdrawal
     const withdrawalsWithBalance = await Promise.all(
       withdrawals.map(async (withdrawal) => {
         const user = await db.collection('users').findOne({ _id: withdrawal.user });
         if (user) {
-          let userBalance = user.balance || { available: 0, frozen: 0 };
-          
-          // Nếu balance là number (kiểu cũ), chuyển đổi thành object
-          if (typeof userBalance === 'number') {
-            userBalance = {
-              available: userBalance,
-              frozen: 0
-            };
-            
-            // Cập nhật database để chuyển đổi sang kiểu mới
-            await db.collection('users').updateOne(
-              { _id: withdrawal.user },
-              { 
-                $set: { 
-                  balance: userBalance,
-                  updatedAt: new Date()
-                } 
-              }
-            );
-            
-            console.log(`🔄 [WITHDRAWAL ADMIN MIGRATION] User ${user.username}: Chuyển đổi balance từ number sang object`);
-          }
-          
-          return { ...withdrawal, userBalance: userBalance.available || 0 };
+          const userBalance = user.balance || { available: 0, frozen: 0 };
+          const availableBalance = typeof userBalance === 'number' ? userBalance : userBalance.available || 0;
+          return { ...withdrawal, userBalance: availableBalance };
         }
         return withdrawal;
       })
@@ -76,6 +55,8 @@ export async function GET(req: NextRequest) {
 }
 
 // API để admin xử lý yêu cầu rút tiền
+// Lưu ý: Khi duyệt rút tiền, chỉ thay đổi trạng thái
+// Tiền đã được trừ khi user tạo yêu cầu rút tiền
 export async function POST(req: NextRequest) {
   try {
     // Xác thực admin
@@ -122,8 +103,11 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === 'approve') {
-      // ✅ TIỀN ĐÃ BỊ TRỪ KHI USER RÚT - CHỈ CẬP NHẬT TRẠNG THÁI
-      console.log(`[ADMIN WITHDRAWALS] Duyệt yêu cầu rút tiền ${withdrawal.amount} VND của user ${withdrawal.username} - Tiền đã bị trừ trước đó`);
+      // Lấy thông tin user để log
+      const user = await db.collection('users').findOne({ _id: withdrawal.user });
+      if (user) {
+        console.log(`[ADMIN WITHDRAWALS] Đã duyệt yêu cầu rút tiền ${withdrawal.amount} VND của user ${user.username}`);
+      }
     }
 
     // Cập nhật trạng thái yêu cầu rút tiền
@@ -140,43 +124,9 @@ export async function POST(req: NextRequest) {
       { $set: updateData }
     );
 
-    // Nếu từ chối, cần trả lại tiền cho user vì tiền đã bị trừ khi rút
+    // Nếu từ chối, không cần làm gì vì tiền chưa bị trừ
     if (action === 'reject') {
-      const user = await db.collection('users').findOne({ _id: withdrawal.user });
-      if (user) {
-        // ✅ CHUẨN HÓA: Luôn sử dụng balance dạng object
-        let userBalance = user.balance || { available: 0, frozen: 0 };
-        
-        // Nếu balance là number (kiểu cũ), chuyển đổi thành object
-        if (typeof userBalance === 'number') {
-          userBalance = {
-            available: userBalance,
-            frozen: 0
-          };
-          
-          console.log(`🔄 [WITHDRAWAL REJECT MIGRATION] User ${user.username}: Chuyển đổi balance từ number sang object`);
-        }
-        
-        const currentAvailable = userBalance.available || 0;
-        const newAvailableBalance = currentAvailable + withdrawal.amount;
-        
-        const newBalance = {
-          ...userBalance,
-          available: newAvailableBalance
-        };
-        
-        await db.collection('users').updateOne(
-          { _id: withdrawal.user },
-          { 
-            $set: { 
-              balance: newBalance,
-              updatedAt: new Date()
-            } 
-          }
-        );
-        
-        console.log(`💰 [ADMIN WITHDRAWALS] Đã từ chối và trả lại ${withdrawal.amount} VND cho user ${user.username}. Số dư cũ: ${currentAvailable} VND, Số dư mới: ${newAvailableBalance} VND`);
-      }
+      console.log(`[ADMIN WITHDRAWALS] Đã từ chối yêu cầu rút tiền ${withdrawal.amount} VND của user ${withdrawal.username}`);
     }
 
     return NextResponse.json({

@@ -10,8 +10,7 @@ export async function GET(request: NextRequest) {
       const { searchParams } = new URL(request.url);
       const page = parseInt(searchParams.get('page') || '1');
       const limit = parseInt(searchParams.get('limit') || '10');
-      const startDate = searchParams.get('startDate') || '';
-      const endDate = searchParams.get('endDate') || '';
+      const date = searchParams.get('date') || '';
       const username = searchParams.get('username') || '';
       const sessionId = searchParams.get('sessionId') || '';
       const skip = (page - 1) * limit;
@@ -23,10 +22,15 @@ export async function GET(request: NextRequest) {
 
       // Build query
       const query: any = {};
-      if (startDate && endDate) {
+      if (date) {
+        const startOfDay = new Date(date);
+        startOfDay.setHours(0, 0, 0, 0);
+        const endOfDay = new Date(date);
+        endOfDay.setHours(23, 59, 59, 999);
+        
         query.createdAt = {
-          $gte: new Date(startDate),
-          $lte: new Date(endDate)
+          $gte: startOfDay,
+          $lte: endOfDay
         };
       }
 

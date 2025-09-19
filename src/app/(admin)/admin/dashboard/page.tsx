@@ -4,9 +4,9 @@ import React from 'react';
 import { Loader2 } from 'lucide-react';
 import AdminLayout from '../components/AdminLayout';
 import { useAdminState } from '../components/useAdminState';
-import SessionResultsManagement from '../components/SessionResultsManagement';
+import Dashboard from '../components/Dashboard';
 
-export default function SessionResultsPage() {
+export default function DashboardPage() {
   const { user, isLoading, isAuthenticated, isAdmin, loading } = useAdminState();
 
   // Loading state
@@ -21,14 +21,14 @@ export default function SessionResultsPage() {
     );
   }
 
-  // Không render nếu không có quyền
+  // Không render nếu không có quyền (useAdminState đã xử lý redirect)
   if (!isAuthenticated() || !isAdmin()) {
     return null;
   }
 
   return (
-    <AdminLayout activeTab="session-results">
-      <SessionResultsManagement />
+    <AdminLayout activeTab="dashboard">
+      <Dashboard />
     </AdminLayout>
   );
 }
