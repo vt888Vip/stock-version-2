@@ -19,7 +19,7 @@ import { createClient } from 'redis';
 
 // Configuration - RabbitMQ Local Open Source
 const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://trading_user:trading_password@localhost:5672';
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://stock-version-2:Vincent79@stockdb.ssitqfx.mongodb.net/finacial_platfom';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://vincent:vincent79@cluster0.btgvgm.mongodb.net/finacial_platform';
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
@@ -1183,10 +1183,18 @@ async function processSettlement(settlementData) {
           
           // Send single balance update for all trades
           const totalProfit = trades.reduce((sum, trade) => sum + trade.profit, 0);
+          const totalAmount = trades.reduce((sum, trade) => sum + trade.amount, 0);
+          const firstTradeId = trades.length > 0 ? trades[0].tradeId : null;
+          
           await sendSocketEvent(userId, 'balance:updated', {
+            userId, // ✅ Thêm userId
+            tradeId: firstTradeId, // ✅ Thêm tradeId của trade đầu tiên
             sessionId,
             totalProfit: totalProfit,
+            totalAmount: totalAmount, // ✅ Thêm totalAmount
             tradeCount: trades.length,
+            profit: totalProfit, // ✅ Thêm profit
+            amount: totalAmount, // ✅ Thêm amount
             message: `Balance đã được cập nhật: ${totalProfit >= 0 ? '+' : ''}${totalProfit} VND`
           });
           

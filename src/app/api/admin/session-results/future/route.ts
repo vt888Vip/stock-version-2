@@ -16,18 +16,26 @@ export async function GET(request: NextRequest) {
 
       const now = new Date();
 
-      // Get future sessions (PENDING status, startTime > now)
-      const futureSessions = await db.collection('trading_sessions')
+      // Get current and future sessions (PENDING, ACTIVE, TRADING status)
+      const sessions = await db.collection('trading_sessions')
         .find({
-          startTime: { $gt: now },
-          status: 'PENDING'
+          $or: [
+            // Future sessions (startTime > now, PENDING)
+            { startTime: { $gt: now }, status: 'PENDING' },
+            // Current session (startTime <= now <= endTime, ACTIVE/TRADING)
+            { 
+              startTime: { $lte: now }, 
+              endTime: { $gte: now },
+              status: { $in: ['ACTIVE', 'TRADING'] }
+            }
+          ]
         })
         .sort({ startTime: 1 }) // Sort by start time ascending (earliest first)
         .limit(limit)
         .toArray();
 
       // Format sessions for frontend
-      const formattedSessions = futureSessions.map(session => ({
+      const formattedSessions = sessions.map(session => ({
         _id: session._id,
         sessionId: session.sessionId,
         startTime: session.startTime,
@@ -42,8 +50,10 @@ export async function GET(request: NextRequest) {
         totalLossAmount: session.totalLossAmount || 0,
         createdAt: session.createdAt,
         updatedAt: session.updatedAt,
-        // Calculate time until session starts
-        timeUntilStart: Math.max(0, Math.floor((session.startTime.getTime() - now.getTime()) / 1000))
+        // Calculate time until session starts (negative if already started)
+        timeUntilStart: Math.floor((session.startTime.getTime() - now.getTime()) / 1000),
+        // Calculate time until session ends (for current sessions)
+        timeUntilEnd: Math.max(0, Math.floor((session.endTime.getTime() - now.getTime()) / 1000))
       }));
 
       return NextResponse.json({

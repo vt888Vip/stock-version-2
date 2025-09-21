@@ -27,6 +27,7 @@ interface Session {
   createdAt: string;
   updatedAt: string;
   timeUntilStart?: number;
+  timeUntilEnd?: number;
 }
 
 // Removed AdminSession interface - not needed for simple table view
@@ -251,21 +252,37 @@ export default function SessionResultsManagement() {
     return `${minutes} phút`;
   };
 
-  const getTimeUntilStart = (startTime: string) => {
+  const getTimeDisplay = (session: Session) => {
     const now = new Date();
-    const start = new Date(startTime);
-    const diff = start.getTime() - now.getTime();
+    const start = new Date(session.startTime);
+    const end = new Date(session.endTime);
+    const startDiff = start.getTime() - now.getTime();
+    const endDiff = end.getTime() - now.getTime();
     
-    if (diff <= 0) return 'Đã bắt đầu';
-    
-    const minutes = Math.floor(diff / (1000 * 60));
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-    
-    if (minutes > 0) {
-      return `${minutes}m ${seconds}s`;
-    } else {
-      return `${seconds}s`;
+    // Nếu session chưa bắt đầu
+    if (startDiff > 0) {
+      const minutes = Math.floor(startDiff / (1000 * 60));
+      const seconds = Math.floor((startDiff % (1000 * 60)) / 1000);
+      if (minutes > 0) {
+        return `Bắt đầu sau: ${minutes}m ${seconds}s`;
+      } else {
+        return `Bắt đầu sau: ${seconds}s`;
+      }
     }
+    
+    // Nếu session đang diễn ra
+    if (endDiff > 0) {
+      const minutes = Math.floor(endDiff / (1000 * 60));
+      const seconds = Math.floor((endDiff % (1000 * 60)) / 1000);
+      if (minutes > 0) {
+        return `Còn lại: ${minutes}m ${seconds}s`;
+      } else {
+        return `Còn lại: ${seconds}s`;
+      }
+    }
+    
+    // Nếu session đã kết thúc
+    return 'Đã kết thúc';
   };
 
   const getStatusBadge = (status: string) => {
@@ -339,10 +356,10 @@ export default function SessionResultsManagement() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
-              {sessions.length} phiên giao dịch tương lai
+              {sessions.length} phiên giao dịch (hiện tại & tương lai)
             </h1>
             <p className="text-sm text-gray-600">
-              Hiển thị real-time 30 phiên giao dịch sắp diễn ra
+              Hiển thị real-time phiên hiện tại và các phiên giao dịch sắp diễn ra
             </p>
           </div>
         </div>
@@ -384,9 +401,9 @@ export default function SessionResultsManagement() {
       {sessions.length === 0 ? (
         <div className="text-center py-12">
           <Clock className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">Chưa có phiên giao dịch tương lai</h3>
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Chưa có phiên giao dịch</h3>
           <p className="text-gray-500">
-            Scheduler chưa tạo phiên giao dịch tương lai hoặc chưa chạy.
+            Scheduler chưa tạo phiên giao dịch hoặc chưa chạy.
           </p>
         </div>
       ) : (
@@ -431,9 +448,9 @@ export default function SessionResultsManagement() {
                   <div className="text-xs text-gray-500">{formatDate(session.endTime)}</div>
                 </div>
 
-                {/* Còn lại */}
+                {/* Thời gian */}
                 <div className="text-blue-600 font-medium">
-                  {getTimeUntilStart(session.startTime)}
+                  {getTimeDisplay(session)}
                 </div>
 
                 {/* Trạng thái */}

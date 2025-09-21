@@ -1,8 +1,8 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/useAuth';
 import { Button } from '@/components/ui/button';
 import { 
@@ -14,7 +14,8 @@ import {
   History, 
   Banknote, 
   Building, 
-  Target 
+  Target,
+  CreditCard
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -24,7 +25,13 @@ interface AdminLayoutProps {
 
 export default function AdminLayout({ children, activeTab }: AdminLayoutProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, logout } = useAuth();
+
+  // Preload next page on hover
+  const handleTabHover = (href: string) => {
+    router.prefetch(href);
+  };
 
   const handleLogout = async () => {
     await logout();
@@ -34,7 +41,7 @@ export default function AdminLayout({ children, activeTab }: AdminLayoutProps) {
   const tabs = [
     { id: 'dashboard', label: 'Dashboard', icon: TrendingUp, href: '/admin/dashboard' },
     { id: 'users', label: 'Quản lý người dùng', icon: Users, href: '/admin/users' },
-    { id: 'transactions', label: 'Lịch sử giao dịch', icon: History, href: '/admin/transactions' },
+    { id: 'withdrawals', label: 'Quản lý rút tiền', icon: CreditCard, href: '/admin/withdrawals' },
     { id: 'deposits', label: 'Nạp tiền', icon: Banknote, href: '/admin/deposits' },
     { id: 'banks', label: 'Quản lý ngân hàng', icon: Building, href: '/admin/banks' },
     { id: 'orders', label: 'Lệnh đặt', icon: History, href: '/admin/orders' },
@@ -83,6 +90,7 @@ export default function AdminLayout({ children, activeTab }: AdminLayoutProps) {
                 <Link
                   key={tab.id}
                   href={tab.href}
+                  onMouseEnter={() => handleTabHover(tab.href)}
                   className={`py-4 px-4 rounded-lg font-medium text-sm transition-all duration-200 ${
                     isActive
                       ? 'bg-blue-100 text-blue-700 border border-blue-200'

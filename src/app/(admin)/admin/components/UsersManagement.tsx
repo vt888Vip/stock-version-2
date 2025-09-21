@@ -41,10 +41,22 @@ export default function UsersManagement() {
   // Search states
   const [searchName, setSearchName] = useState('');
   const [searchDateFrom, setSearchDateFrom] = useState('');
+  const [searchDateTo, setSearchDateTo] = useState('');
+  const [searchRole, setSearchRole] = useState('all');
+  const [searchStatus, setSearchStatus] = useState('all');
+  const [searchLoading, setSearchLoading] = useState(false);
 
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const [usersPerPage] = useState(20);
+  const [pagination, setPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalUsers: 0,
+    usersPerPage: 20,
+    hasNextPage: false,
+    hasPrevPage: false
+  });
 
   // User management states
   const [editingUser, setEditingUser] = useState<any>(null);
@@ -211,10 +223,26 @@ export default function UsersManagement() {
     };
   }, [socketContext?.socket]);
 
-  const loadUsers = async () => {
+  const loadUsers = async (page = currentPage, isSearch = false) => {
     try {
-      setLoading(true);
-      const response = await fetch('/api/admin/users', {
+      if (isSearch) {
+        setSearchLoading(true);
+      } else {
+        setLoading(true);
+      }
+      
+      // Xây dựng query parameters
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: usersPerPage.toString(),
+        ...(searchName && { search: searchName }),
+        ...(searchRole && searchRole !== 'all' && { role: searchRole }),
+        ...(searchStatus && searchStatus !== 'all' && { status: searchStatus }),
+        ...(searchDateFrom && { dateFrom: searchDateFrom }),
+        ...(searchDateTo && { dateTo: searchDateTo })
+      });
+
+      const response = await fetch(`/api/admin/users?${params}`, {
         credentials: 'include',
         headers: {
           'Authorization': `Bearer ${localStorage.getItem('token')}`
@@ -224,6 +252,21 @@ export default function UsersManagement() {
       if (response.ok) {
         const data = await response.json();
         setUsers(data.users || []);
+        setPagination(data.pagination || {
+          currentPage: 1,
+          totalPages: 1,
+          totalUsers: 0,
+          usersPerPage: 20,
+          hasNextPage: false,
+          hasPrevPage: false
+        });
+      } else {
+        const errorData = await response.json();
+        toast({
+          title: 'Lỗi',
+          description: errorData.message || 'Không thể tải danh sách người dùng',
+          variant: 'destructive',
+        });
       }
     } catch (error) {
       console.error('Error loading users:', error);
@@ -233,38 +276,22 @@ export default function UsersManagement() {
         variant: 'destructive',
       });
     } finally {
-      setLoading(false);
+      if (isSearch) {
+        setSearchLoading(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
   // Function to manually refresh user data (fallback)
   const refreshUserData = async () => {
-    try {
-      const response = await fetch('/api/admin/users', {
-        credentials: 'include',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        setUsers(data.users || []);
-        setLastUpdate(new Date());
-        
-        toast({
-          title: 'Thành công',
-          description: 'Đã làm mới dữ liệu người dùng',
-        });
-      }
-    } catch (error) {
-      console.error('Error refreshing user data:', error);
-      toast({
-        title: 'Lỗi',
-        description: 'Không thể làm mới dữ liệu',
-        variant: 'destructive',
-      });
-    }
+    await loadUsers(currentPage);
+    setLastUpdate(new Date());
+    toast({
+      title: 'Thành công',
+      description: 'Đã làm mới dữ liệu người dùng',
+    });
   };
 
   // User management functions
@@ -293,7 +320,7 @@ export default function UsersManagement() {
         });
         setShowUserModal(false);
         setEditingUser(null);
-        loadUsers();
+        loadUsers(currentPage);
       } else {
         const error = await response.json();
         toast({
@@ -335,12 +362,14 @@ export default function UsersManagement() {
         });
         setShowDeleteConfirm(false);
         setUserToDelete(null);
-        loadUsers();
-        // Reset to first page if current page becomes empty
-        const remainingUsers = users.length - 1;
+        // Check if we need to go to previous page
+        const remainingUsers = totalUsers - 1;
         const maxPage = Math.ceil(remainingUsers / usersPerPage);
         if (currentPage > maxPage && maxPage > 0) {
           setCurrentPage(maxPage);
+          loadUsers(maxPage);
+        } else {
+          loadUsers(currentPage);
         }
       } else {
         const error = await response.json();
@@ -438,54 +467,56 @@ export default function UsersManagement() {
     }
   };
 
-  // Filter users based on search criteria
-  const filteredUsers = users.filter((user: any) => {
-    const nameMatch = searchName === '' || 
-      user.username?.toLowerCase().includes(searchName.toLowerCase());
-    
-    const dateMatch = () => {
-      if (!searchDateFrom) return true;
-      
-      const userDate = new Date(user.createdAt);
-      const searchDate = new Date(searchDateFrom);
-      
-      return userDate.toDateString() === searchDate.toDateString();
-    };
-    
-    return nameMatch && dateMatch();
-  });
-
-  // Pagination logic
-  const indexOfLastUser = currentPage * usersPerPage;
-  const indexOfFirstUser = indexOfLastUser - usersPerPage;
-  const currentUsers = filteredUsers.slice(indexOfFirstUser, indexOfLastUser);
-  const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
+  // Pagination logic - now using server-side data
+  const currentUsers = users; // Users are already filtered and paginated by server
+  const totalPages = pagination.totalPages;
+  const totalUsers = pagination.totalUsers;
 
   // Pagination functions
   const goToPage = (pageNumber: number) => {
     setCurrentPage(pageNumber);
+    loadUsers(pageNumber);
   };
 
   const goToFirstPage = () => {
-    setCurrentPage(1);
+    if (pagination.hasPrevPage) {
+      goToPage(1);
+    }
   };
 
   const goToLastPage = () => {
-    setCurrentPage(totalPages);
+    if (pagination.hasNextPage) {
+      goToPage(totalPages);
+    }
   };
 
   const goToPreviousPage = () => {
-    setCurrentPage(prev => Math.max(prev - 1, 1));
+    if (pagination.hasPrevPage) {
+      goToPage(currentPage - 1);
+    }
   };
 
   const goToNextPage = () => {
-    setCurrentPage(prev => Math.min(prev + 1, totalPages));
+    if (pagination.hasNextPage) {
+      goToPage(currentPage + 1);
+    }
   };
 
-  // Reset to first page when search changes
+  // Debounced search effect
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setCurrentPage(1);
+      loadUsers(1, true);
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchName, searchDateFrom, searchDateTo, searchRole, searchStatus]);
+
+  // Immediate search for non-text inputs
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchName, searchDateFrom]);
+    loadUsers(1, true);
+  }, [searchRole, searchStatus, searchDateFrom, searchDateTo]);
 
   // File upload functions
   const handleFileUpload = async (file: File, type: 'front' | 'back') => {
@@ -611,27 +642,71 @@ export default function UsersManagement() {
               <Search className="h-5 w-5 text-blue-600" />
               <h3 className="text-lg font-semibold text-gray-800">Tìm kiếm người dùng</h3>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
-                <Label htmlFor="searchName" className="text-gray-700 font-medium">Tìm kiếm theo tên</Label>
+                <Label htmlFor="searchName" className="text-gray-700 font-medium">Tìm kiếm theo tên/email</Label>
                 <div className="relative mt-1">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                   <Input
                     id="searchName"
-                    placeholder="Nhập tên người dùng..."
+                    placeholder="Nhập tên hoặc email..."
                     value={searchName}
                     onChange={(e) => setSearchName(e.target.value)}
                     className="pl-10"
+                    disabled={searchLoading}
                   />
+                  {searchLoading && (
+                    <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                    </div>
+                  )}
                 </div>
               </div>
               <div>
-                <Label htmlFor="searchDateFrom" className="text-gray-700 font-medium">Ngày tạo giao dịch</Label>
+                <Label htmlFor="searchRole" className="text-gray-700 font-medium">Vai trò</Label>
+                <Select value={searchRole} onValueChange={setSearchRole}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Tất cả vai trò" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả vai trò</SelectItem>
+                    <SelectItem value="user">Người dùng</SelectItem>
+                    <SelectItem value="admin">Quản trị viên</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label htmlFor="searchStatus" className="text-gray-700 font-medium">Trạng thái</Label>
+                <Select value={searchStatus} onValueChange={setSearchStatus}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue placeholder="Tất cả trạng thái" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Tất cả trạng thái</SelectItem>
+                    <SelectItem value="active">Hoạt động</SelectItem>
+                    <SelectItem value="inactive">Bị khóa</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+              <div>
+                <Label htmlFor="searchDateFrom" className="text-gray-700 font-medium">Từ ngày</Label>
                 <Input
                   id="searchDateFrom"
                   type="date"
                   value={searchDateFrom}
                   onChange={(e) => setSearchDateFrom(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div>
+                <Label htmlFor="searchDateTo" className="text-gray-700 font-medium">Đến ngày</Label>
+                <Input
+                  id="searchDateTo"
+                  type="date"
+                  value={searchDateTo}
+                  onChange={(e) => setSearchDateTo(e.target.value)}
                   className="mt-1"
                 />
               </div>
@@ -643,6 +718,9 @@ export default function UsersManagement() {
                   onClick={() => {
                     setSearchName('');
                     setSearchDateFrom('');
+                    setSearchDateTo('');
+                    setSearchRole('all');
+                    setSearchStatus('all');
                   }}
                   className="flex items-center gap-2"
                 >
@@ -661,7 +739,7 @@ export default function UsersManagement() {
               <div className="flex items-center gap-4">
                 <div className="text-sm text-gray-600 flex items-center gap-2">
                   <Users className="h-4 w-4" />
-                  Tìm thấy {filteredUsers.length} người dùng
+                  Tìm thấy {totalUsers} người dùng
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="text-xs text-gray-600 flex items-center gap-1">
@@ -807,14 +885,14 @@ export default function UsersManagement() {
           {totalPages > 1 && (
             <div className="mt-6 flex items-center justify-between">
               <div className="text-sm text-gray-600">
-                Hiển thị {indexOfFirstUser + 1}-{Math.min(indexOfLastUser, filteredUsers.length)} trong tổng số {filteredUsers.length} người dùng
+                Hiển thị {((currentPage - 1) * usersPerPage) + 1}-{Math.min(currentPage * usersPerPage, totalUsers)} trong tổng số {totalUsers} người dùng
               </div>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={goToFirstPage}
-                  disabled={currentPage === 1}
+                  disabled={!pagination.hasPrevPage}
                   className="flex items-center gap-1"
                 >
                   <ChevronsLeft className="h-4 w-4" />
@@ -824,7 +902,7 @@ export default function UsersManagement() {
                   variant="outline"
                   size="sm"
                   onClick={goToPreviousPage}
-                  disabled={currentPage === 1}
+                  disabled={!pagination.hasPrevPage}
                   className="flex items-center gap-1"
                 >
                   <ChevronLeft className="h-4 w-4" />
@@ -849,7 +927,7 @@ export default function UsersManagement() {
                   variant="outline"
                   size="sm"
                   onClick={goToNextPage}
-                  disabled={currentPage === totalPages}
+                  disabled={!pagination.hasNextPage}
                   className="flex items-center gap-1"
                 >
                   Sau
@@ -859,7 +937,7 @@ export default function UsersManagement() {
                   variant="outline"
                   size="sm"
                   onClick={goToLastPage}
-                  disabled={currentPage === totalPages}
+                  disabled={!pagination.hasNextPage}
                   className="flex items-center gap-1"
                 >
                   Cuối

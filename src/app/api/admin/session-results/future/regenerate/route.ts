@@ -92,3 +92,4 @@ function generateSessionId(date: Date): string {
   
   return `${year}${month}${day}${hour}${minute}`;
 }
+

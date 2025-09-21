@@ -96,16 +96,16 @@ export default function TradePage() {
     const filtered = trades.filter(trade => {
       if (seen.has(trade.id)) {
         duplicates.push(trade.id);
-        console.warn('🚨 Duplicate trade found:', trade.id);
+        // console.warn('🚨 Duplicate trade found:', trade.id);
         return false;
       }
       seen.add(trade.id);
       return true;
     });
     
-    if (duplicates.length > 0) {
-      console.warn('🚨 Found duplicate trades:', duplicates);
-    }
+    // if (duplicates.length > 0) {
+    //   console.warn('🚨 Found duplicate trades:', duplicates);
+    // }
     
     return filtered;
   };
@@ -115,12 +115,12 @@ export default function TradePage() {
     try {
       const date = new Date(dateString);
       if (isNaN(date.getTime())) {
-        console.warn('🚨 Invalid date:', dateString, 'using current date');
+        // console.warn('🚨 Invalid date:', dateString, 'using current date');
         return new Date().toISOString();
       }
       return date.toISOString();
     } catch (error) {
-      console.warn('🚨 Date parsing error:', error, 'using current date');
+      // console.warn('🚨 Date parsing error:', error, 'using current date');
       return new Date().toISOString();
     }
   };
@@ -159,7 +159,7 @@ export default function TradePage() {
   const fetchBalanceFromServer = async () => {
     // ✅ FIX: Tránh multiple concurrent fetches
     if (isBalanceFetching) {
-      console.log('⏳ [BALANCE] Already fetching balance, skipping...');
+      // console.log('⏳ [BALANCE] Already fetching balance, skipping...');
       return;
     }
     
@@ -175,7 +175,7 @@ export default function TradePage() {
       if (data.success) {
         setBalance(data.balance.available);
         setFrozenBalance(data.balance.frozen);
-        console.log('💰 [BALANCE] Updated from server:', data.balance.available);
+        // console.log('💰 [BALANCE] Updated from server:', data.balance.available);
       }
     } catch (error) {
       console.error('❌ [BALANCE SYNC] Error fetching balance:', error);
@@ -195,7 +195,7 @@ export default function TradePage() {
       
       // ✅ FIX: Chỉ xử lý events có sequence mới hơn (bỏ qua nếu bằng nhau)
       if (sequence && sequence < lastSequence) {
-        console.log('⚠️ Ignoring old balance event:', sequence, '<', lastSequence);
+        // console.log('⚠️ Ignoring old balance event:', sequence, '<', lastSequence);
         return;
       }
       
@@ -294,7 +294,7 @@ export default function TradePage() {
       
       // ✅ FIX: Chỉ xử lý events có sequence mới hơn (bỏ qua nếu bằng nhau)
       if (sequence && sequence < lastSequence) {
-        console.log('⚠️ Ignoring old trade completed event:', sequence, '<', lastSequence);
+        // console.log('⚠️ Ignoring old trade completed event:', sequence, '<', lastSequence);
         return;
       }
       
@@ -464,7 +464,7 @@ export default function TradePage() {
     if (socket?.connected) {
       // Delay 2 giây để tránh conflict với Socket.IO events
       const timeout = setTimeout(() => {
-        console.log('🔄 Socket reconnected, fetching balance from server');
+        // console.log('🔄 Socket reconnected, fetching balance from server');
         fetchBalanceFromServer();
       }, 2000);
       
@@ -478,7 +478,7 @@ export default function TradePage() {
       // Chỉ sync nếu không có Socket.IO events gần đây
       const timeSinceLastSync = Date.now() - lastBalanceSync;
       if (timeSinceLastSync > 30000) { // Chỉ sync nếu > 30s không có update
-        console.log('🔄 Periodic balance sync (no recent updates)');
+        // console.log('🔄 Periodic balance sync (no recent updates)');
         fetchBalanceFromServer();
       }
     }, 60000); // Sync mỗi 60 giây
@@ -581,7 +581,7 @@ export default function TradePage() {
             }
           }
         } catch (error) {
-          console.error('❌ [INIT] Lỗi khi load balance ban đầu:', error);
+          // console.error('❌ [INIT] Lỗi khi load balance ban đầu:', error);
         }
       };
 
@@ -759,7 +759,7 @@ export default function TradePage() {
             await syncBalance(setBalance, setIsSyncingBalance, setLastBalanceSync);
           }
         } catch (error) {
-          console.error('Lỗi khi sync balance:', error);
+          // console.error('Lỗi khi sync balance:', error);
         } finally {
           setUpdateCountdown(null);
           setIsBalanceLocked(false);
@@ -783,10 +783,10 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`trade_window_opened_${data.sessionId}_${data.timestamp}`)) {
-        console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
-        console.log('📈 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        console.log('📈 [FRONTEND-SCHEDULER] Trade window opened at:', data.timestamp);
-        console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
+        // console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
+        // console.log('📈 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        // console.log('📈 [FRONTEND-SCHEDULER] Trade window opened at:', data.timestamp);
+        // console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`trade_window_opened_${data.sessionId}_${data.timestamp}`);
@@ -802,10 +802,10 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`trade_window_closed_${data.sessionId}_${data.timestamp}`)) {
-        console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
-        console.log('📉 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        console.log('📉 [FRONTEND-SCHEDULER] Trade window closed at:', data.timestamp);
-        console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
+        // console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
+        // console.log('📉 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        // console.log('📉 [FRONTEND-SCHEDULER] Trade window closed at:', data.timestamp);
+        // console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`trade_window_closed_${data.sessionId}_${data.timestamp}`);
@@ -825,12 +825,12 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`settlement_completed_${data.sessionId}_${data.timestamp}`)) {
-        console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
-        console.log('✅ [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        console.log('✅ [FRONTEND-SCHEDULER] Total wins:', data.totalWins);
-        console.log('✅ [FRONTEND-SCHEDULER] Total losses:', data.totalLosses);
-        console.log('✅ [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
-        console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+        // console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
+        // console.log('✅ [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        // console.log('✅ [FRONTEND-SCHEDULER] Total wins:', data.totalWins);
+        // console.log('✅ [FRONTEND-SCHEDULER] Total losses:', data.totalLosses);
+        // console.log('✅ [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
+        // console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`settlement_completed_${data.sessionId}_${data.timestamp}`);
@@ -846,10 +846,10 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`session_completed_${data.sessionId}_${data.timestamp}`)) {
-        console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
-        console.log('🏁 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        console.log('🏁 [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
-        console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+        // console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+        // console.log('🏁 [FRONTEND-SCHEDULER] Session:', data.sessionId);
+        // console.log('🏁 [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
+        // console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`session_completed_${data.sessionId}_${data.timestamp}`);
@@ -1080,11 +1080,11 @@ export default function TradePage() {
 
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('API Error:', {
-          status: response.status,
-          statusText: response.statusText,
-          errorData
-        });
+        // console.error('API Error:', {
+        //   status: response.status,
+        //   statusText: response.statusText,
+        //   errorData
+        // });
         throw new Error(errorData.error || errorData.message || `Lỗi ${response.status}: ${response.statusText}`);
       }
 
@@ -1146,7 +1146,7 @@ export default function TradePage() {
         // Socket.IO event sẽ được gửi từ server
       }
     } catch (error) {
-      console.error('Lỗi khi đặt lệnh:', error);
+      // console.error('Lỗi khi đặt lệnh:', error);
       toast({
         title: 'Lỗi',
         description: error instanceof Error ? error.message : 'Lỗi khi đặt lệnh',
@@ -1265,7 +1265,7 @@ export default function TradePage() {
                                     alert(`Current: ${data.data.currentBalance.available} | Calculated: ${data.data.calculatedBalance.available}`);
                                   }
                                 } catch (error) {
-                                  console.error('Debug balance error:', error);
+                                  // console.error('Debug balance error:', error);
                                 }
                               }}
                               className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
@@ -1486,7 +1486,7 @@ export default function TradePage() {
                                   alert(`Current: ${data.data.currentBalance.available} | Calculated: ${data.data.calculatedBalance.available}`);
                                 }
                               } catch (error) {
-                                console.error('Debug balance error:', error);
+                                // console.error('Debug balance error:', error);
                               }
                             }}
                             className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"

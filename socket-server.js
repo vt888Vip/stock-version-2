@@ -12,7 +12,18 @@ const io = new Server(server, {
     methods: ["GET", "POST"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"]
-  }
+  },
+  // ✅ Tối ưu cấu hình cho VPS
+  pingTimeout: 60000, // 60s
+  pingInterval: 25000, // 25s
+  transports: ['websocket', 'polling'], // Fallback cho VPS
+  allowEIO3: true, // Tương thích với client cũ
+  // ✅ Tối ưu performance
+  maxHttpBufferSize: 1e6, // 1MB
+  compression: true,
+  // ✅ Tối ưu reconnection
+  allowUpgrades: true,
+  upgradeTimeout: 10000
 });
 
 // HTTP endpoint để nhận event từ API
@@ -131,7 +142,7 @@ const sendToUser = (userId, event, data) => {
   try {
     // ✅ FIX: Hỗ trợ broadcast to all users
     if (userId === 'all') {
-      console.log(`📡 [SOCKET] Broadcasting ${event} to all users`);
+      // console.log(`📡 [SOCKET] Broadcasting ${event} to all users`);
       io.emit(event, {
         ...data,
         timestamp: new Date().toISOString()
@@ -141,7 +152,7 @@ const sendToUser = (userId, event, data) => {
     
     // ✅ THÊM: Hỗ trợ gửi event chỉ đến admin users
     if (userId === 'admin') {
-      console.log(`👑 [SOCKET] Sending ${event} to admin users only`);
+      // console.log(`👑 [SOCKET] Sending ${event} to admin users only`);
       // Gửi đến tất cả users có role admin
       io.emit(event, {
         ...data,
@@ -163,14 +174,14 @@ const sendToUser = (userId, event, data) => {
     if (event === 'trade:history:updated') {
       const action = data.action || 'update';
       const tradeCount = data.trade ? 1 : (data.trades ? data.trades.length : 0);
-      console.log(`📊 [LỊCH SỬ] ${action === 'add' ? 'Thêm' : 'Cập nhật'} ${tradeCount} giao dịch cho user ${userId}`);
+      // console.log(`📊 [LỊCH SỬ] ${action === 'add' ? 'Thêm' : 'Cập nhật'} ${tradeCount} giao dịch cho user ${userId}`);
     } else if (event === 'balance:updated') {
       const profit = data.profit || data.totalProfit || 0;
       const tradeCount = data.tradeCount || 1;
       const result = data.result || 'unknown';
-      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profit >= 0 ? '+' : ''}${profit.toLocaleString()} VND (${result}, ${tradeCount} giao dịch)`);
+      // console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profit >= 0 ? '+' : ''}${profit.toLocaleString()} VND (${result}, ${tradeCount} giao dịch)`);
     } else if (event === 'session:timer:update') {
-      console.log(`⏰ [SOCKET] Timer update sent to ${userId === 'all' ? 'all users' : `user ${userId}`}: ${data.timeLeft}s for session ${data.sessionId}`);
+      // console.log(`⏰ [SOCKET] Timer update sent to ${userId === 'all' ? 'all users' : `user ${userId}`}: ${data.timeLeft}s for session ${data.sessionId}`);
     }
     
     return true;
@@ -187,7 +198,7 @@ const broadcastToAll = (event, data) => {
       ...data,
       timestamp: new Date().toISOString()
     });
-    console.log(`📡 Broadcasted ${event} to all users:`, data);
+    // console.log(`📡 Broadcasted ${event} to all users:`, data);
     return true;
   } catch (error) {
     console.error(`❌ Error broadcasting ${event}:`, error);

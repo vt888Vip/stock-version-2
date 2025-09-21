@@ -9,10 +9,16 @@ export async function GET(request: NextRequest) {
     try {
       const { searchParams } = new URL(request.url);
       const page = parseInt(searchParams.get('page') || '1');
-      const limit = parseInt(searchParams.get('limit') || '10');
+      const limit = parseInt(searchParams.get('limit') || '20');
       const date = searchParams.get('date') || '';
+      const dateFrom = searchParams.get('dateFrom') || '';
+      const dateTo = searchParams.get('dateTo') || '';
       const username = searchParams.get('username') || '';
       const sessionId = searchParams.get('sessionId') || '';
+      const status = searchParams.get('status') || '';
+      const direction = searchParams.get('direction') || '';
+      const amountMin = searchParams.get('amountMin') || '';
+      const amountMax = searchParams.get('amountMax') || '';
       const skip = (page - 1) * limit;
 
       const db = await getMongoDb();
@@ -22,6 +28,8 @@ export async function GET(request: NextRequest) {
 
       // Build query
       const query: any = {};
+      
+      // Date filtering
       if (date) {
         const startOfDay = new Date(date);
         startOfDay.setHours(0, 0, 0, 0);
@@ -32,6 +40,39 @@ export async function GET(request: NextRequest) {
           $gte: startOfDay,
           $lte: endOfDay
         };
+      } else if (dateFrom || dateTo) {
+        query.createdAt = {};
+        if (dateFrom) {
+          const startDate = new Date(dateFrom);
+          startDate.setHours(0, 0, 0, 0);
+          query.createdAt.$gte = startDate;
+        }
+        if (dateTo) {
+          const endDate = new Date(dateTo);
+          endDate.setHours(23, 59, 59, 999);
+          query.createdAt.$lte = endDate;
+        }
+      }
+
+      // Status filtering
+      if (status) {
+        query.status = status;
+      }
+
+      // Direction filtering
+      if (direction) {
+        query.direction = direction;
+      }
+
+      // Amount filtering
+      if (amountMin || amountMax) {
+        query.amount = {};
+        if (amountMin) {
+          query.amount.$gte = parseInt(amountMin);
+        }
+        if (amountMax) {
+          query.amount.$lte = parseInt(amountMax);
+        }
       }
 
       // Get paginated results with user information and search
@@ -114,16 +155,20 @@ export async function GET(request: NextRequest) {
         completedAt: trade.completedAt
       }));
 
+      const totalPages = Math.ceil(total / limit);
+      const hasNextPage = page < totalPages;
+      const hasPrevPage = page > 1;
+
       return NextResponse.json({
         success: true,
-        data: {
-          orders: formattedOrders,
-          pagination: {
-            total,
-            page,
-            totalPages: Math.ceil(total / limit),
-            limit
-          }
+        orders: formattedOrders,
+        pagination: {
+          currentPage: page,
+          totalPages,
+          totalOrders: total,
+          ordersPerPage: limit,
+          hasNextPage,
+          hasPrevPage
         }
       });
 

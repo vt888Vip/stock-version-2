@@ -23,10 +23,66 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: 'Không có quyền truy cập' }, { status: 403 });
     }
 
-    // Lấy danh sách người dùng
+    // Lấy tham số phân trang và tìm kiếm
+    const { searchParams } = new URL(request.url);
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '20');
+    const search = searchParams.get('search') || '';
+    const role = searchParams.get('role') || '';
+    const status = searchParams.get('status') || '';
+    const dateFrom = searchParams.get('dateFrom') || '';
+    const dateTo = searchParams.get('dateTo') || '';
+
+    // Xây dựng query filter
+    const filter: any = {};
+    
+    // Tìm kiếm theo username hoặc email
+    if (search) {
+      filter.$or = [
+        { username: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } }
+      ];
+    }
+
+    // Lọc theo role
+    if (role) {
+      filter.role = role;
+    }
+
+    // Lọc theo trạng thái
+    if (status) {
+      if (status === 'active') {
+        filter['status.active'] = true;
+      } else if (status === 'inactive') {
+        filter['status.active'] = false;
+      }
+    }
+
+    // Lọc theo ngày tạo
+    if (dateFrom || dateTo) {
+      filter.createdAt = {};
+      if (dateFrom) {
+        filter.createdAt.$gte = new Date(dateFrom);
+      }
+      if (dateTo) {
+        const endDate = new Date(dateTo);
+        endDate.setHours(23, 59, 59, 999); // Kết thúc ngày
+        filter.createdAt.$lte = endDate;
+      }
+    }
+
+    // Tính toán skip
+    const skip = (page - 1) * limit;
+
+    // Lấy tổng số users (cho pagination)
+    const totalUsers = await db.collection('users').countDocuments(filter);
+
+    // Lấy danh sách người dùng với phân trang
     const users = await db.collection('users')
-      .find({})
+      .find(filter)
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .toArray();
 
     // Lấy thông tin số dư từ field balance
@@ -48,14 +104,29 @@ export async function GET(request: NextRequest) {
         verification: user.verification || { verified: false },
         bank: user.bank || { name: '', accountNumber: '', accountHolder: '' },
         cccd: user.cccd || { front: '', back: '', verified: false },
+        totalDeposited: user.totalDeposited || 0,
+        totalWithdrawn: user.totalWithdrawn || 0,
         createdAt: user.createdAt,
         lastLogin: user.lastLogin
       };
     });
 
+    // Tính toán thông tin phân trang
+    const totalPages = Math.ceil(totalUsers / limit);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
     return NextResponse.json({
       success: true,
-      users: usersWithBalance
+      users: usersWithBalance,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalUsers,
+        usersPerPage: limit,
+        hasNextPage,
+        hasPrevPage
+      }
     });
     
   } catch (error) {

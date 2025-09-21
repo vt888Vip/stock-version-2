@@ -41,8 +41,7 @@ const BankSchema = new Schema<IBank>({
   timestamps: true
 });
 
-// Index để tối ưu query
-BankSchema.index({ accountNumber: 1 });
+// Index để tối ưu query (accountNumber đã có unique index)
 BankSchema.index({ status: 1 });
 BankSchema.index({ createdAt: -1 });
 

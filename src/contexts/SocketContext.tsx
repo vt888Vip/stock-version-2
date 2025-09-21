@@ -38,9 +38,9 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
     const token = localStorage.getItem('authToken');
     
-    console.log('🔗 Connecting to Socket.IO...');
-    console.log('🔑 Token:', token ? 'Present' : 'Not found');
-    console.log('👤 User:', user);
+    // console.log('🔗 Connecting to Socket.IO...');
+    // console.log('🔑 Token:', token ? 'Present' : 'Not found');
+    // console.log('👤 User:', user);
 
     // Sử dụng IP của VPS thay vì localhost
     const socketUrl = window.location.hostname === 'localhost' 
@@ -51,25 +51,55 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       auth: {
         token: token || 'test-token'
       },
-      transports: ['websocket', 'polling'],
-      timeout: 20000,
-      forceNew: true
+      transports: ['websocket'], // ✅ Chỉ dùng WebSocket cho real-time
+      timeout: 10000, // ✅ Giảm timeout xuống 10s
+      forceNew: true,
+      // ✅ Thêm cấu hình tối ưu cho VPS
+      upgrade: true,
+      rememberUpgrade: true,
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000
     });
 
     newSocket.on('connect', () => {
-      console.log('✅ Socket.IO connected');
-      console.log('🔗 Socket ID:', newSocket.id);
-      console.log('🔗 Socket transport:', newSocket.io.engine.transport.name);
+      // console.log('✅ Socket.IO connected');
+      // console.log('🔗 Socket ID:', newSocket.id);
+      // console.log('🔗 Socket transport:', newSocket.io.engine.transport.name);
+      // console.log('🌐 Server URL:', socketUrl);
       setIsConnected(true);
     });
 
+    // ✅ Thêm monitoring cho VPS
+    newSocket.on('connect_error', (error) => {
+      console.error('❌ Socket.IO connection error:', error);
+      // console.log('🔄 Will retry connection...');
+    });
+
+    newSocket.on('reconnect', (attemptNumber) => {
+      // console.log(`🔄 Socket.IO reconnected after ${attemptNumber} attempts`);
+    });
+
+    newSocket.on('reconnect_attempt', (attemptNumber) => {
+      // console.log(`🔄 Socket.IO reconnection attempt ${attemptNumber}`);
+    });
+
+    newSocket.on('reconnect_error', (error) => {
+      console.error('❌ Socket.IO reconnection error:', error);
+    });
+
+    newSocket.on('reconnect_failed', () => {
+      console.error('❌ Socket.IO reconnection failed - giving up');
+    });
+
     newSocket.on('disconnect', () => {
-      console.log('🔌 Socket.IO disconnected');
+      // console.log('🔌 Socket.IO disconnected');
       setIsConnected(false);
     });
 
     newSocket.on('connected', (data) => {
-      console.log('📡 Socket.IO server message:', data);
+      // console.log('📡 Socket.IO server message:', data);
     });
 
     // Debug: Log tất cả events (disabled for cleaner console)

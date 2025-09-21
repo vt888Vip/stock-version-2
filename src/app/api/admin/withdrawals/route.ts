@@ -3,7 +3,7 @@ import { getMongoDb } from '@/lib/db';
 import { ObjectId } from 'mongodb';
 import { verifyToken } from '@/lib/auth';
 
-// API để admin lấy danh sách yêu cầu rút tiền
+// API để admin lấy danh sách yêu cầu rút tiền với phân trang
 export async function GET(req: NextRequest) {
   try {
     // Xác thực admin
@@ -24,28 +24,113 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ message: 'Không có quyền truy cập' }, { status: 403 });
     }
 
-    // Lấy danh sách yêu cầu rút tiền
+    // Lấy tham số phân trang và tìm kiếm
+    const { searchParams } = new URL(req.url);
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '20');
+    const search = searchParams.get('search') || '';
+    const status = searchParams.get('status') || '';
+    const dateFrom = searchParams.get('dateFrom') || '';
+    const dateTo = searchParams.get('dateTo') || '';
+    const amountMin = searchParams.get('amountMin') || '';
+    const amountMax = searchParams.get('amountMax') || '';
+
+    // Xây dựng query filter
+    const filter: any = {};
+    
+    // Tìm kiếm theo username
+    if (search) {
+      // Tìm user theo username trước
+      const users = await db.collection('users').find({
+        username: { $regex: search, $options: 'i' }
+      }).toArray();
+      
+      if (users.length > 0) {
+        filter.user = { $in: users.map(u => u._id) };
+      } else {
+        // Nếu không tìm thấy user nào, trả về empty result
+        filter.user = { $in: [] };
+      }
+    }
+
+    // Lọc theo trạng thái
+    if (status) {
+      filter.status = status;
+    }
+
+    // Lọc theo khoảng thời gian
+    if (dateFrom || dateTo) {
+      filter.createdAt = {};
+      if (dateFrom) {
+        filter.createdAt.$gte = new Date(dateFrom);
+      }
+      if (dateTo) {
+        const endDate = new Date(dateTo);
+        endDate.setHours(23, 59, 59, 999);
+        filter.createdAt.$lte = endDate;
+      }
+    }
+
+    // Lọc theo khoảng số tiền
+    if (amountMin || amountMax) {
+      filter.amount = {};
+      if (amountMin) {
+        filter.amount.$gte = parseInt(amountMin);
+      }
+      if (amountMax) {
+        filter.amount.$lte = parseInt(amountMax);
+      }
+    }
+
+    // Tính toán skip
+    const skip = (page - 1) * limit;
+
+    // Lấy tổng số withdrawals (cho pagination)
+    const totalWithdrawals = await db.collection('withdrawals').countDocuments(filter);
+
+    // Lấy danh sách yêu cầu rút tiền với phân trang
     const withdrawals = await db.collection('withdrawals')
-      .find({})
+      .find(filter)
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .toArray();
 
-    // Thêm thông tin số dư user cho mỗi withdrawal
-    const withdrawalsWithBalance = await Promise.all(
+    // Thêm thông tin user cho mỗi withdrawal
+    const withdrawalsWithUserInfo = await Promise.all(
       withdrawals.map(async (withdrawal) => {
         const user = await db.collection('users').findOne({ _id: withdrawal.user });
         if (user) {
           const userBalance = user.balance || { available: 0, frozen: 0 };
           const availableBalance = typeof userBalance === 'number' ? userBalance : userBalance.available || 0;
-          return { ...withdrawal, userBalance: availableBalance };
+          return { 
+            ...withdrawal, 
+            username: user.username,
+            email: user.email,
+            userBalance: availableBalance,
+            bank: user.bank || {}
+          };
         }
         return withdrawal;
       })
     );
 
+    // Tính toán thông tin phân trang
+    const totalPages = Math.ceil(totalWithdrawals / limit);
+    const hasNextPage = page < totalPages;
+    const hasPrevPage = page > 1;
+
     return NextResponse.json({
       success: true,
-      withdrawals: withdrawalsWithBalance
+      withdrawals: withdrawalsWithUserInfo,
+      pagination: {
+        currentPage: page,
+        totalPages,
+        totalWithdrawals,
+        withdrawalsPerPage: limit,
+        hasNextPage,
+        hasPrevPage
+      }
     });
 
   } catch (error) {
@@ -55,8 +140,9 @@ export async function GET(req: NextRequest) {
 }
 
 // API để admin xử lý yêu cầu rút tiền
-// Lưu ý: Khi duyệt rút tiền, chỉ thay đổi trạng thái
-// Tiền đã được trừ khi user tạo yêu cầu rút tiền
+// Lưu ý: 
+// - Khi duyệt: chỉ thay đổi trạng thái (tiền đã bị trừ khi user tạo yêu cầu)
+// - Khi từ chối: hoàn lại tiền cho user + thay đổi trạng thái
 export async function POST(req: NextRequest) {
   try {
     // Xác thực admin
@@ -124,14 +210,47 @@ export async function POST(req: NextRequest) {
       { $set: updateData }
     );
 
-    // Nếu từ chối, không cần làm gì vì tiền chưa bị trừ
+    // Nếu từ chối, cần hoàn lại tiền cho user
     if (action === 'reject') {
       console.log(`[ADMIN WITHDRAWALS] Đã từ chối yêu cầu rút tiền ${withdrawal.amount} VND của user ${withdrawal.username}`);
+      
+      // Hoàn lại tiền cho user
+      const user = await db.collection('users').findOne({ _id: withdrawal.user });
+      if (user) {
+        // Chuẩn hóa balance format
+        let userBalance = user.balance || { available: 0, frozen: 0 };
+        if (typeof userBalance === 'number') {
+          userBalance = {
+            available: userBalance,
+            frozen: 0
+          };
+        }
+        
+        // Hoàn lại tiền vào available balance
+        const newBalance = {
+          ...userBalance,
+          available: (userBalance.available || 0) + withdrawal.amount
+        };
+        
+        await db.collection('users').updateOne(
+          { _id: withdrawal.user },
+          { 
+            $set: { 
+              balance: newBalance,
+              updatedAt: new Date()
+            } 
+          }
+        );
+        
+        console.log(`[ADMIN WITHDRAWALS] Đã hoàn lại ${withdrawal.amount} VND cho user ${user.username}`);
+      }
     }
 
     return NextResponse.json({
       success: true,
-      message: action === 'approve' ? 'Đã duyệt yêu cầu rút tiền' : 'Đã từ chối yêu cầu rút tiền'
+      message: action === 'approve' 
+        ? 'Đã duyệt yêu cầu rút tiền' 
+        : 'Đã từ chối yêu cầu rút tiền và hoàn lại tiền cho người dùng'
     });
 
   } catch (error) {

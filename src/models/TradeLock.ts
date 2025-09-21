@@ -30,8 +30,7 @@ const TradeLockSchema = new Schema<ITradeLock>({
   },
   lockExpiry: {
     type: Date,
-    required: true,
-    index: true
+    required: true
   },
   createdAt: {
     type: Date,

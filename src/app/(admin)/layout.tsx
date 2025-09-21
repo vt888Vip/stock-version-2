@@ -3,6 +3,7 @@ import type { Metadata } from "next"
 import { Inter } from "next/font/google"
 import { cn } from "@/lib/utils"
 import { ProtectedRoute } from "@/components/auth/protected-route"
+import { AdminDataProvider } from "@/contexts/AdminDataContext"
 
 const inter = Inter({ subsets: ["latin"] })
 
@@ -20,7 +21,9 @@ export default function AdminLayout({
     <html lang="vi" suppressHydrationWarning>
       <body className={cn("min-h-screen bg-background font-sans antialiased", inter.className)} suppressHydrationWarning>
         <ProtectedRoute requiredRole="admin">
-          {children}
+          <AdminDataProvider>
+            {children}
+          </AdminDataProvider>
         </ProtectedRoute>
       </body>
     </html>
