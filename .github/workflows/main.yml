@@ -3,7 +3,7 @@ name: Next Deployment
 
 on:
   push:
-    branches: [productions]
+    branches: [production]
 
 
 jobs:
