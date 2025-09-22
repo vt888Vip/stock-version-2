@@ -17,7 +17,7 @@ jobs:
         username: ${{ secrets.USERNAME}}
         password: ${{ secrets.PASSWORD}}
         port: 22
-        scirpt: |
+        script: |
           cd /home/stock-version-2
           git fetch origin
           git checkout produciton
