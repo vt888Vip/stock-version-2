@@ -167,7 +167,7 @@ export default function SessionResultsManagement() {
         return;
       }
 
-      const response = await fetch('/api/admin/session-results/future?limit=30', {
+      const response = await fetch('/api/admin/session-results/future?limit=31', {
         credentials: 'include',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -356,10 +356,10 @@ export default function SessionResultsManagement() {
           </div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">
-              {sessions.length} phiên giao dịch (hiện tại & tương lai)
+              {sessions.length} phiên giao dịch (31 phiên mới nhất)
             </h1>
             <p className="text-sm text-gray-600">
-              Hiển thị real-time phiên hiện tại và các phiên giao dịch sắp diễn ra
+              Hiển thị 31 phiên giao dịch mới nhất bao gồm phiên hiện tại và tương lai
             </p>
           </div>
         </div>

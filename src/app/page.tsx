@@ -146,7 +146,7 @@ export default function Landing() {
   const router = useRouter();
   const [isVisible, setIsVisible] = useState(false);
   const [currentSlide, setCurrentSlide] = useState(0);
-  const totalSlides = 4; // Tăng số slide lên 4
+  const totalSlides = 6; // Tăng số slide lên 6
 
   useEffect(() => {
     setIsVisible(true);
@@ -191,7 +191,7 @@ export default function Landing() {
                    currentSlide === 0 ? 'opacity-100' : 'opacity-0'
                  }`}
                  style={{
-                   backgroundImage: "url(/slide1.jpg)",
+                   backgroundImage: "url(/slider/17c76dce05c94b1c8390c9aceee28141.jpeg)",
                    backgroundSize: 'cover',
                    backgroundPosition: 'center',
                    backgroundRepeat: 'no-repeat'
@@ -202,7 +202,7 @@ export default function Landing() {
                    currentSlide === 1 ? 'opacity-100' : 'opacity-0'
                  }`}
                  style={{
-                   backgroundImage: "url(/slider/photo_2025-08-12_01-18-12.jpg)",
+                   backgroundImage: "url(/slider/anh-4-1653003550931626260027.jpeg)",
                    backgroundSize: 'cover',
                    backgroundPosition: 'center',
                    backgroundRepeat: 'no-repeat'
@@ -213,7 +213,7 @@ export default function Landing() {
                    currentSlide === 2 ? 'opacity-100' : 'opacity-0'
                  }`}
                  style={{
-                   backgroundImage: "url(/slider/photo_2025-08-12_01-18-40.jpg)",
+                   backgroundImage: "url(/slider/anh-5-16530036436871772018632.jpg)",
                    backgroundSize: 'cover',
                    backgroundPosition: 'center',
                    backgroundRepeat: 'no-repeat'
@@ -224,7 +224,29 @@ export default function Landing() {
                    currentSlide === 3 ? 'opacity-100' : 'opacity-0'
                  }`}
                  style={{
-                   backgroundImage: "url(/slider/photo_2025-08-12_01-18-43.jpg)",
+                   backgroundImage: "url(/slider/ft-london-15682221610182006404077.jpg)",
+                   backgroundSize: 'cover',
+                   backgroundPosition: 'center',
+                   backgroundRepeat: 'no-repeat'
+                 }}
+               />
+               <div 
+                 className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                   currentSlide === 4 ? 'opacity-100' : 'opacity-0'
+                 }`}
+                 style={{
+                   backgroundImage: "url(/slider/image1-ttg-165-16526642382841799715374.jpeg)",
+                   backgroundSize: 'cover',
+                   backgroundPosition: 'center',
+                   backgroundRepeat: 'no-repeat'
+                 }}
+               />
+               <div 
+                 className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${
+                   currentSlide === 5 ? 'opacity-100' : 'opacity-0'
+                 }`}
+                 style={{
+                   backgroundImage: "url(/slider/photo_2025-08-12_01-18-40.jpg)",
                    backgroundSize: 'cover',
                    backgroundPosition: 'center',
                    backgroundRepeat: 'no-repeat'
@@ -255,7 +277,7 @@ export default function Landing() {
             
                          {/* Slide indicators */}
              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 flex space-x-2" style={{ zIndex: 10 }}>
-               {[0, 1, 2, 3].map((index) => (
+               {[0, 1, 2, 3, 4, 5].map((index) => (
                  <button
                    key={index}
                    onClick={() => setCurrentSlide(index)}

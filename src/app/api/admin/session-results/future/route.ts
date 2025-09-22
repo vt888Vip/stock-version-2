@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
   return requireAdmin(request, async (req: NextRequest, user: any) => {
     try {
       const { searchParams } = new URL(request.url);
-      const limit = parseInt(searchParams.get('limit') || '30');
+      const limit = parseInt(searchParams.get('limit') || '31');
 
       const db = await getMongoDb();
       if (!db) {
@@ -16,21 +16,26 @@ export async function GET(request: NextRequest) {
 
       const now = new Date();
 
-      // Get current and future sessions (PENDING, ACTIVE, TRADING status)
+      // Get 31 most recent sessions including current and future
       const sessions = await db.collection('trading_sessions')
         .find({
           $or: [
             // Future sessions (startTime > now, PENDING)
             { startTime: { $gt: now }, status: 'PENDING' },
-            // Current session (startTime <= now <= endTime, ACTIVE/TRADING)
+            // Current session (startTime <= now <= endTime, any active status)
             { 
               startTime: { $lte: now }, 
               endTime: { $gte: now },
-              status: { $in: ['ACTIVE', 'TRADING'] }
+              status: { $in: ['ACTIVE', 'TRADING', 'SETTLING'] }
+            },
+            // Recent completed sessions (within last 2 hours) for context
+            {
+              endTime: { $gte: new Date(now.getTime() - 2 * 60 * 60 * 1000) }, // Last 2 hours
+              status: 'COMPLETED'
             }
           ]
         })
-        .sort({ startTime: 1 }) // Sort by start time ascending (earliest first)
+        .sort({ startTime: -1 }) // Sort by start time descending (newest first)
         .limit(limit)
         .toArray();
 
