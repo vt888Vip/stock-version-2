@@ -1,0 +1,29 @@
+name: Next Deployment
+
+
+on:
+  push:
+    branches: [productions]
+
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps: 
+    - name: Deploy using ssh
+      uses: appleboy/ssh-acction@master
+      with:
+        host: ${{ secrets.HOST}}
+        username: ${{ secrets.USERNAME}}
+        password: ${{ secrets.PASSWORD}}
+        port: 22
+        scirpt: |
+          cd /home/stock-version-2
+          git fetch origin
+          git checkout produciton
+          git pull
+          npm install
+          npm run build
+          pm2 reload socket
+          pm2 reload worker
+          pm2 reload next-app
