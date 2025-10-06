@@ -6,26 +6,9 @@ const fs = require('fs');
 const path = require('path');
 
 // Create HTTP/HTTPS server
-let server;
-const isProduction = process.env.NODE_ENV === 'production';
-
-if (isProduction) {
-  try {
-    // Try to load SSL certificates
-    const options = {
-      key: fs.readFileSync('/etc/letsencrypt/live/hcmlondonvn.com/privkey.pem'),
-      cert: fs.readFileSync('/etc/letsencrypt/live/hcmlondonvn.com/fullchain.pem')
-    };
-    server = createHttpsServer(options);
-    console.log('🔒 HTTPS server created with SSL certificates');
-  } catch (error) {
-    console.log('⚠️ SSL certificates not found, falling back to HTTP');
-    server = createServer();
-  }
-} else {
-  server = createServer();
-  console.log('🔓 HTTP server created for development');
-}
+// Always run HTTP internally (SSL terminates at NGINX)
+let server = createServer();
+console.log(`🔓 Socket server running over HTTP internally`);
 
 // Initialize Socket.IO
 const io = new Server(server, {

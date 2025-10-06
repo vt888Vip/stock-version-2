@@ -51,7 +51,7 @@ export const ENV_CONFIG = {
   RABBITMQ_URL: process.env.RABBITMQ_URL || 'amqp://trading_user:trading_password@localhost:5672',
   
   // Socket.IO
-  SOCKET_SERVER_URL: process.env.SOCKET_SERVER_URL || (process.env.NODE_ENV === 'production' ? 'https://hcmlondonvn.com:3001' : 'http://localhost:3001'),
+  SOCKET_SERVER_URL: process.env.SOCKET_SERVER_URL || (process.env.NODE_ENV === 'production' ? 'http://127.0.0.1:3001' : 'http://localhost:3001'),
   
   // Security
   JWT_SECRET: process.env.JWT_SECRET || 'your-secret-key'

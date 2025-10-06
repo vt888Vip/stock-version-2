@@ -45,11 +45,10 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     // Sử dụng tên miền hoặc IP của VPS thay vì localhost
     const socketUrl = window.location.hostname === 'localhost' 
       ? 'http://localhost:3001' 
-      : window.location.protocol === 'https:'
-        ? 'https://hcmlondonvn.com:3001'
-        : 'http://hcmlondonvn.com:3001';
+      : window.location.origin; // sử dụng domain (443)
     
     const newSocket = io(socketUrl, {
+      path: '/socket.io',
       auth: {
         token: token || 'test-token'
       },

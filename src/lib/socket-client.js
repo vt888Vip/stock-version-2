@@ -2,13 +2,13 @@
 const sendToSocketServer = async (userId, event, data) => {
   try {
     // Tự động detect socket server URL
-    const socketUrl = typeof window !== 'undefined' 
-      ? (window.location.hostname === 'localhost' 
-          ? 'http://localhost:3001' 
-          : `${window.location.protocol}//hcmlondonvn.com:3001`)
-      : 'http://localhost:3001';
+            const socketUrl = typeof window !== 'undefined' 
+              ? (window.location.hostname === 'localhost' 
+                  ? 'http://localhost:3001' 
+                  : window.location.origin)
+              : 'http://127.0.0.1:3001';
     
-    const response = await fetch(`${socketUrl}/emit`, {
+            const response = await fetch(`${socketUrl}/emit`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

@@ -612,7 +612,7 @@ export class TradingScheduler {
 
       // Send to socket server
       
-      fetch(`${process.env.NODE_ENV === 'production' ? 'https://hcmlondonvn.com:3001' : 'http://localhost:3001'}/emit`, {
+      fetch(`${process.env.SOCKET_SERVER_URL || (process.env.NODE_ENV === 'production' ? 'http://127.0.0.1:3001' : 'http://localhost:3001')}/emit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
