@@ -1,14 +1,46 @@
 const { createServer } = require('http');
+const { createServer: createHttpsServer } = require('https');
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const path = require('path');
 
-// Create HTTP server
-const server = createServer();
+// Create HTTP/HTTPS server
+let server;
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isProduction) {
+  try {
+    // Try to load SSL certificates
+    const options = {
+      key: fs.readFileSync('/etc/letsencrypt/live/hcmlondonvn.com/privkey.pem'),
+      cert: fs.readFileSync('/etc/letsencrypt/live/hcmlondonvn.com/fullchain.pem')
+    };
+    server = createHttpsServer(options);
+    console.log('🔒 HTTPS server created with SSL certificates');
+  } catch (error) {
+    console.log('⚠️ SSL certificates not found, falling back to HTTP');
+    server = createServer();
+  }
+} else {
+  server = createServer();
+  console.log('🔓 HTTP server created for development');
+}
 
 // Initialize Socket.IO
 const io = new Server(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://174.138.24.77:3000", "http://174.138.24.77"],
+    origin: [
+      "http://localhost:3000", 
+      "https://hcmlondonvn.com",
+      "https://www.hcmlondonvn.com",
+      "http://hcmlondonvn.com",
+      "http://www.hcmlondonvn.com",
+      "https://176.97.65.153",
+      "http://176.97.65.153",
+      "https://176.97.65.153:3000",
+      "http://176.97.65.153:3000"
+    ],
     methods: ["GET", "POST"],
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"]
@@ -207,10 +239,17 @@ const broadcastToAll = (event, data) => {
 };
 
 // Start server
-const PORT = 3001;
+const PORT = process.env.SOCKET_PORT || 3001;
+const protocol = isProduction && server.constructor.name === 'Server' ? 'https' : 'http';
+
 server.listen(PORT, () => {
   console.log(`🚀 Socket.IO server running on port ${PORT}`);
-  console.log(`📡 CORS enabled for: http://localhost:3000`);
+  console.log(`📡 Protocol: ${protocol.toUpperCase()}`);
+  console.log(`📡 CORS enabled for:`);
+  console.log(`   - http://localhost:3000`);
+  console.log(`   - https://hcmlondonvn.com`);
+  console.log(`   - https://www.hcmlondonvn.com`);
+  console.log(`   - https://176.97.65.153`);
 });
 
 // Export functions for use in other files

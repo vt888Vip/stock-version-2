@@ -42,10 +42,12 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     // console.log('🔑 Token:', token ? 'Present' : 'Not found');
     // console.log('👤 User:', user);
 
-    // Sử dụng IP của VPS thay vì localhost
+    // Sử dụng tên miền hoặc IP của VPS thay vì localhost
     const socketUrl = window.location.hostname === 'localhost' 
       ? 'http://localhost:3001' 
-      : 'http://174.138.24.77:3001';
+      : window.location.protocol === 'https:'
+        ? 'https://hcmlondonvn.com:3001'
+        : 'http://hcmlondonvn.com:3001';
     
     const newSocket = io(socketUrl, {
       auth: {

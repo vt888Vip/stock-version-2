@@ -1,16 +1,21 @@
 const getApiBaseUrl = () => {
   if (typeof window === 'undefined') {
-    // Phía server
-    return `https://${process.env.NEXT_PUBLIC_DEFAULT_DOMAIN}:${process.env.NEXT_PUBLIC_API_PORT}`;
+    // Phía server - sử dụng tên miền mới
+    return process.env.NODE_ENV === 'production' 
+      ? 'https://hcmlondonvn.com:3000'
+      : 'http://localhost:3000';
   }
 
-  // Phía client
-  const currentDomain = window.location.hostname;
-  const isAlternateDomain = currentDomain === process.env.NEXT_PUBLIC_ALTERNATE_DOMAIN;
+  // Phía client - tự động detect protocol và domain
+  const protocol = window.location.protocol;
+  const hostname = window.location.hostname;
   
-  return isAlternateDomain 
-    ? `https://${process.env.NEXT_PUBLIC_ALTERNATE_DOMAIN}:${process.env.NEXT_PUBLIC_API_PORT}`
-    : `https://${process.env.NEXT_PUBLIC_DEFAULT_DOMAIN}:${process.env.NEXT_PUBLIC_API_PORT}`;
+  if (hostname === 'localhost') {
+    return 'http://localhost:3000';
+  }
+  
+  // Sử dụng tên miền mới
+  return `${protocol}//hcmlondonvn.com:3000`;
 };
 
 export const API_CONFIG = {

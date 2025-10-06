@@ -1,7 +1,14 @@
 // Client để gửi event đến Socket.IO server
 const sendToSocketServer = async (userId, event, data) => {
   try {
-    const response = await fetch('http://localhost:3001/emit', {
+    // Tự động detect socket server URL
+    const socketUrl = typeof window !== 'undefined' 
+      ? (window.location.hostname === 'localhost' 
+          ? 'http://localhost:3001' 
+          : `${window.location.protocol}//hcmlondonvn.com:3001`)
+      : 'http://localhost:3001';
+    
+    const response = await fetch(`${socketUrl}/emit`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

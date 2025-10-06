@@ -1,12 +1,18 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-// Danh sách domain được phép truy cập (local dev)
+// Danh sách domain được phép truy cập
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
+  'https://hcmlondonvn.com',
+  'https://www.hcmlondonvn.com',
+  'http://hcmlondonvn.com',
+  'http://www.hcmlondonvn.com',
+  'https://176.97.65.153',
+  'http://176.97.65.153',
 ];
 
 // Các header bảo mật

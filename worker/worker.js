@@ -27,7 +27,9 @@ const REDIS_DB = parseInt(process.env.REDIS_DB || '0');
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
 const SETTLEMENTS_QUEUE = 'settlements';
 const TRADE_PROCESSING_QUEUE = 'trade-processing';
-const SOCKET_SERVER_URL = 'http://localhost:3001';
+const SOCKET_SERVER_URL = process.env.NODE_ENV === 'production' 
+  ? 'https://hcmlondonvn.com:3001' 
+  : 'http://localhost:3001';
 
 let connection;
 let channel;
