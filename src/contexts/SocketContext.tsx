@@ -79,44 +79,27 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     newSocket.on('connect', () => {
-      console.log('✅ Socket.IO connected to VPS');
-      console.log('🔗 Socket ID:', newSocket.id);
-      console.log('🔗 Socket transport:', newSocket.io.engine.transport.name);
-      console.log('🌐 Server URL:', socketUrl);
-      console.log('⏱️ Connection time:', new Date().toISOString());
       setIsConnected(true);
     });
 
     // ✅ Thêm monitoring cho VPS
-    newSocket.on('connect_error', (error) => {
-      console.error('❌ Socket.IO connection error to VPS:', error);
-      console.log('🔄 Will retry connection...');
-      console.log('🌐 Target URL:', socketUrl);
+    newSocket.on('connect_error', () => {
       setIsConnected(false);
     });
 
-    newSocket.on('disconnect', (reason) => {
-      console.warn('⚠️ Socket.IO disconnected from VPS:', reason);
-      console.log('🔄 Will attempt to reconnect...');
+    newSocket.on('disconnect', () => {
       setIsConnected(false);
     });
 
-    newSocket.on('reconnect', (attemptNumber) => {
-      console.log('🔄 Socket.IO reconnected to VPS after', attemptNumber, 'attempts');
+    newSocket.on('reconnect', () => {
       setIsConnected(true);
     });
 
-    newSocket.on('reconnect_attempt', (attemptNumber) => {
-      console.log('🔄 Socket.IO reconnection attempt', attemptNumber, 'to VPS');
-    });
+    newSocket.on('reconnect_attempt', () => {});
 
-    newSocket.on('reconnect_error', (error) => {
-      console.error('❌ Socket.IO reconnection error to VPS:', error);
-    });
+    newSocket.on('reconnect_error', () => {});
 
-    newSocket.on('reconnect_failed', () => {
-      console.error('❌ Socket.IO reconnection failed - giving up');
-    });
+    newSocket.on('reconnect_failed', () => {});
 
     newSocket.on('disconnect', () => {
       // console.log('🔌 Socket.IO disconnected');
@@ -163,22 +146,16 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     newSocket.on('balance:updated', (data) => {
-      // ✅ DEBUG: Log balance events
-      console.log('💰 [SOCKET] Balance event received:', data);
-      
       // ✅ Xử lý batch events
       if (data.batch && data.events) {
-        console.log(`💰 [SOCKET] Processing batch of ${data.events.length} balance events`);
         // Gửi từng event trong batch
-        data.events.forEach((eventData: any, index: number) => {
-          console.log(`💰 [SOCKET] Dispatching balance event ${index + 1}/${data.events.length}:`, eventData);
+        data.events.forEach((eventData: any) => {
           const balanceEvent = new CustomEvent('balance:updated', {
             detail: eventData
           });
           window.dispatchEvent(balanceEvent);
         });
       } else {
-        console.log('💰 [SOCKET] Dispatching single balance event:', data);
         // Gửi single event
         const balanceEvent = new CustomEvent('balance:updated', {
           detail: data
@@ -190,22 +167,16 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     newSocket.on('trade:history:updated', (data) => {
-      // ✅ DEBUG: Log trade history events
-      console.log('📊 [SOCKET] Trade history event received:', data);
-      
       // ✅ Xử lý batch events
       if (data.batch && data.events) {
-        console.log(`📊 [SOCKET] Processing batch of ${data.events.length} trade history events`);
         // Gửi từng event trong batch
-        data.events.forEach((eventData: any, index: number) => {
-          console.log(`📊 [SOCKET] Dispatching trade history event ${index + 1}/${data.events.length}:`, eventData);
+        data.events.forEach((eventData: any) => {
           const tradeHistoryEvent = new CustomEvent('trade:history:updated', {
             detail: eventData
           });
           window.dispatchEvent(tradeHistoryEvent);
         });
       } else {
-        console.log('📊 [SOCKET] Dispatching single trade history event:', data);
         // Gửi single event
         const tradeHistoryEvent = new CustomEvent('trade:history:updated', {
           detail: data

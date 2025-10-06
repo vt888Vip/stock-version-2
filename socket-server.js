@@ -263,7 +263,7 @@ const broadcastToAll = (event, data) => {
 
 // Start server
 const PORT = process.env.SOCKET_PORT || 3001;
-const protocol = isProduction && server.constructor.name === 'Server' ? 'https' : 'http';
+const protocol = 'http';
 
 server.listen(PORT, () => {
   console.log(`🚀 Socket.IO server running on port ${PORT}`);

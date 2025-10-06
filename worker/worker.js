@@ -1218,6 +1218,20 @@ async function processSettlement(settlementData) {
             });
           }
         }
+
+        // ✅ ALWAYS: Broadcast settlement completed to all users (kể cả khi 0 trades)
+        await sendSocketEvent('all', 'session:settlement:completed', {
+          sessionId,
+          result: sessionResult,
+          totals: {
+            totalTrades: pendingTrades.length,
+            totalWins,
+            totalLosses,
+            totalWinAmount,
+            totalLossAmount
+          },
+          settledAt: new Date().toISOString()
+        });
         
         return {
           success: true,
