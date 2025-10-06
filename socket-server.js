@@ -6,6 +6,9 @@ const fs = require('fs');
 const path = require('path');
 
 // Create HTTP/HTTPS server
+// Environment
+const isProduction = process.env.NODE_ENV === 'production';
+
 // Always run HTTP internally (SSL terminates at NGINX)
 let server = createServer();
 console.log(`🔓 Socket server running over HTTP internally`);
