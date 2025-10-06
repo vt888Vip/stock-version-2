@@ -25,3 +25,4 @@ jobs:
           pm2 reload socket
           pm2 reload worker
           pm2 reload next-app
+
