@@ -190,7 +190,16 @@ export default function TradePage() {
   // Listen for balance:updated events from Socket.IO
   useEffect(() => {
     const handleBalanceUpdate = (event: CustomEvent) => {
-      const { profit, result, amount, tradeId, sequence } = event.detail;
+      const { profit, result, amount, tradeId, sequence, userId } = event.detail;
+      
+      console.log('💰 [TRADE PAGE] Balance update received:', event.detail);
+      
+      // ✅ FIX: Chỉ xử lý events cho user hiện tại
+      if (userId && userId !== user?.id) {
+        console.log('💰 [TRADE PAGE] Ignoring balance update for different user:', userId, 'vs', user?.id);
+        return;
+      }
+      
       // console.log('💰 Balance update received from Socket.IO:', event.detail);
       
       // ✅ FIX: Chỉ xử lý events có sequence mới hơn (bỏ qua nếu bằng nhau)
@@ -234,14 +243,14 @@ export default function TradePage() {
         }
       });
       
-      // ✅ FIX: Debounce fetch balance từ server (tăng delay để tránh race condition)
+      // ✅ FIX: Debounce fetch balance từ server (giảm delay để real-time hơn)
       if (balanceUpdateTimeout) {
         clearTimeout(balanceUpdateTimeout);
       }
       
       const timeout = setTimeout(() => {
         fetchBalanceFromServer();
-      }, 1000); // Debounce 1 giây để tránh race condition
+      }, 500); // Giảm từ 1s xuống 500ms để real-time hơn
       
       setBalanceUpdateTimeout(timeout);
     };

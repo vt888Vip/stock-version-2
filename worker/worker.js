@@ -1248,26 +1248,81 @@ async function processSettlement(settlementData) {
 // ✅ FIX: Sequence counter để tránh race condition
 let sequenceCounter = 0;
 
+// ✅ Tối ưu: Event batching để giảm số lượng requests cho VPS
+const eventBatch = new Map();
+const BATCH_DELAY = 100; // 100ms delay để batch events cho VPS
+const MAX_BATCH_SIZE = 10; // Max events per batch
+
 /**
- * Gửi Socket.IO event
+ * Gửi Socket.IO event với batching
  */
 async function sendSocketEvent(userId, event, data) {
   try {
-    // ✅ FIX: Thêm sequence number vào mỗi event
     const sequence = ++sequenceCounter;
+    const eventKey = `${userId}:${event}`;
     
+    // ✅ BATCH: Thêm event vào batch thay vì gửi ngay
+    if (!eventBatch.has(eventKey)) {
+      eventBatch.set(eventKey, {
+        userId,
+        event,
+        events: [],
+        timeout: null
+      });
+    }
+    
+    const batch = eventBatch.get(eventKey);
+    batch.events.push({
+      ...data,
+      sequence,
+      timestamp: new Date().toISOString()
+    });
+    
+    // ✅ Clear timeout cũ và set timeout mới
+    if (batch.timeout) {
+      clearTimeout(batch.timeout);
+    }
+    
+    // ✅ Force flush nếu batch quá lớn
+    if (batch.events.length >= MAX_BATCH_SIZE) {
+      if (batch.timeout) {
+        clearTimeout(batch.timeout);
+      }
+      await flushEventBatch(eventKey);
+    } else {
+      batch.timeout = setTimeout(async () => {
+        await flushEventBatch(eventKey);
+      }, BATCH_DELAY);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`❌ [SOCKET] Error queuing event ${event}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Flush event batch
+ */
+async function flushEventBatch(eventKey) {
+  try {
+    const batch = eventBatch.get(eventKey);
+    if (!batch || batch.events.length === 0) return;
+    
+    // ✅ Gửi batch events trong 1 request
     const response = await fetch(`${SOCKET_SERVER_URL}/emit`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        userId,
-        event,
+        userId: batch.userId,
+        event: batch.event,
         data: {
-          ...data,
-          sequence,
-          timestamp: new Date().toISOString()
+          batch: true,
+          events: batch.events,
+          count: batch.events.length
         }
       })
     });
@@ -1278,24 +1333,15 @@ async function sendSocketEvent(userId, event, data) {
 
     const result = await response.json();
     
-    // ✅ DEBUG: Log chi tiết cho balance:updated events
-    if (event === 'balance:updated') {
-      const target = userId === 'all' ? 'ALL USERS' : userId === 'admin' ? 'ADMIN ONLY' : `user ${userId}`;
-      console.log(`💰 [SOCKET] Balance update sent: ${event} to ${target} (seq: ${sequence})`);
-      console.log(`💰 [SOCKET] Data:`, {
-        userId: data.userId,
-        tradeId: data.tradeId,
-        amount: data.amount,
-        profit: data.profit,
-        message: data.message
-      });
-    } else {
-      console.log(`📡 [SOCKET] Event sent: ${event} to user ${userId} (seq: ${sequence})`, result);
-    }
+    // ✅ Log batch events
+    console.log(`📡 [SOCKET] Batch sent: ${batch.event} to user ${batch.userId} (${batch.events.length} events)`, result);
+    
+    // ✅ Clear batch
+    eventBatch.delete(eventKey);
     
     return result.success;
   } catch (error) {
-    console.error(`❌ [SOCKET] Error sending event ${event}:`, error);
+    console.error(`❌ [SOCKET] Error flushing batch ${eventKey}:`, error);
     return false;
   }
 }

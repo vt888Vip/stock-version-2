@@ -183,7 +183,7 @@ export async function getRecentSessions(db: Db, limit: number = 10) {
   try {
     const sessions = await db.collection('trading_sessions')
       .find({})
-      .sort({ startTime: -1 })
+      .sort({ startTime: 1 })
       .limit(limit)
       .toArray();
     

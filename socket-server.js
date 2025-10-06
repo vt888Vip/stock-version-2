@@ -45,17 +45,34 @@ const io = new Server(server, {
     credentials: true,
     allowedHeaders: ["Content-Type", "Authorization"]
   },
-  // ✅ Tối ưu cấu hình cho VPS
-  pingTimeout: 60000, // 60s
-  pingInterval: 25000, // 25s
+  // ✅ Tối ưu cấu hình cho VPS - Ultra Real-time
+  pingTimeout: 15000, // 15s - giảm thêm
+  pingInterval: 5000, // 5s - giảm thêm cho VPS
   transports: ['websocket', 'polling'], // Fallback cho VPS
   allowEIO3: true, // Tương thích với client cũ
-  // ✅ Tối ưu performance
-  maxHttpBufferSize: 1e6, // 1MB
+  // ✅ Tối ưu performance cho VPS
+  maxHttpBufferSize: 2e6, // 2MB - tăng cho VPS
   compression: true,
-  // ✅ Tối ưu reconnection
+  // ✅ Tối ưu reconnection cho VPS
   allowUpgrades: true,
-  upgradeTimeout: 10000
+  upgradeTimeout: 3000, // Giảm xuống 3s
+  // ✅ Thêm cấu hình real-time cho VPS
+  serveClient: false, // Tắt serve client files
+  cookie: false, // Tắt cookie để giảm overhead
+  // ✅ Tối ưu cho VPS - Aggressive settings
+  perMessageDeflate: {
+    threshold: 512, // Giảm threshold
+    concurrencyLimit: 5, // Giảm concurrency
+    memLevel: 5 // Giảm memory level
+  },
+  // ✅ Thêm cấu hình cho VPS
+  connectTimeout: 10000, // 10s connection timeout
+  transports: ['websocket', 'polling'], // Fallback transport
+  // ✅ Tối ưu cho network không ổn định
+  forceBase64: false, // Sử dụng binary frames
+  // ✅ Thêm heartbeat cho VPS
+  heartbeatInterval: 5000, // 5s heartbeat
+  heartbeatTimeout: 10000 // 10s heartbeat timeout
 });
 
 // HTTP endpoint để nhận event từ API
@@ -69,11 +86,28 @@ server.on('request', (req, res) => {
       try {
         const { userId, event, data } = JSON.parse(body);
         
-        // Gửi event đến user
-        const success = sendToUser(userId, event, data);
-        
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success }));
+        // ✅ Xử lý batch events
+        if (data.batch && data.events) {
+          // Gửi từng event trong batch
+          let successCount = 0;
+          for (const eventData of data.events) {
+            const success = sendToUser(userId, event, eventData);
+            if (success) successCount++;
+          }
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ 
+            success: successCount > 0, 
+            processed: successCount,
+            total: data.events.length
+          }));
+        } else {
+          // Gửi single event
+          const success = sendToUser(userId, event, data);
+          
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success }));
+        }
       } catch (error) {
         console.error('❌ Error parsing request:', error);
         res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -85,7 +119,10 @@ server.on('request', (req, res) => {
     res.end(JSON.stringify({ 
       status: 'ok', 
       connections: io.engine.clientsCount,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      version: process.version
     }));
   } else {
     res.writeHead(404, { 'Content-Type': 'application/json' });

@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
             }
           ]
         })
-        .sort({ startTime: -1 }) // Sort by start time descending (newest first)
+        .sort({ startTime: 1 }) // Sort by start time ascending (oldest first)
         .limit(limit)
         .toArray();
 

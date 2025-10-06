@@ -46,7 +46,7 @@ export const ENV_CONFIG = {
   WORKER_PREFETCH: process.env.WORKER_PREFETCH || '10',
   
   // Database URLs
-  MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://stock-version-2:Vincent79@stockdb.ssitqfx.mongodb.net/finacial_platfom',
+  MONGODB_URI: process.env.MONGODB_URI || 'mongodb+srv://vincent:vincent79@cluster0.btgvgm.mongodb.net/finacial_platform',
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   RABBITMQ_URL: process.env.RABBITMQ_URL || 'amqp://trading_user:trading_password@localhost:5672',
   
