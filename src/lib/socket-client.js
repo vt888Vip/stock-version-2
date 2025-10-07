@@ -1,14 +1,20 @@
 // Client để gửi event đến Socket.IO server
 const sendToSocketServer = async (userId, event, data) => {
   try {
-    // Tự động detect socket server URL
-            const socketUrl = typeof window !== 'undefined' 
-              ? (window.location.hostname === 'localhost' 
-                  ? 'http://localhost:3001' 
-                  : window.location.origin)
-              : 'http://127.0.0.1:3001';
-    
-            const response = await fetch(`${socketUrl}/emit`, {
+    // Ưu tiên biến môi trường, fallback theo môi trường chạy
+    const envUrl = process.env.NEXT_PUBLIC_SOCKET_URL || process.env.SOCKET_SERVER_URL;
+    const socketUrl = envUrl
+      ? envUrl
+      : (typeof window !== 'undefined'
+          ? (window.location.hostname === 'localhost'
+              ? 'http://localhost:3001'
+              : window.location.origin)
+          : 'http://127.0.0.1:3001');
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+
+    const response = await fetch(`${socketUrl}/emit`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -18,9 +24,10 @@ const sendToSocketServer = async (userId, event, data) => {
         event,
         data
       }),
-      // Thêm timeout để tránh hang
-      signal: AbortSignal.timeout(5000) // 5 seconds timeout
+      signal: controller.signal
     });
+
+    clearTimeout(timeout);
 
     if (!response.ok) {
       console.error(`❌ Socket.IO server responded with status: ${response.status}`);
@@ -28,15 +35,14 @@ const sendToSocketServer = async (userId, event, data) => {
     }
 
     const result = await response.json();
-    console.log(`📡 Event sent to Socket.IO server:`, result);
-    return result.success;
+    return !!result.success;
   } catch (error) {
-    if (error.name === 'TimeoutError') {
+    if (error.name === 'AbortError') {
       console.error('❌ Socket.IO server timeout after 5 seconds');
-    } else if (error.name === 'TypeError' && error.message.includes('fetch')) {
+    } else if (error.name === 'TypeError' && (error.message || '').includes('fetch')) {
       console.error('❌ Socket.IO server không thể kết nối (có thể chưa chạy)');
     } else {
-      console.error('❌ Error sending event to Socket.IO server:', error.message);
+      console.error('❌ Error sending event to Socket.IO server:', error.message || error);
     }
     return false;
   }
