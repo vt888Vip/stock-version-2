@@ -234,17 +234,31 @@ async function processSettlement(settlementData) {
       // 1. Lấy session info và kết quả
       const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
         { sessionId },
-        { result: 1, status: 1 }
+        { result: 1, status: 1, processingComplete: 1 }
       );
       
       if (!sessionDoc || !sessionDoc.result) {
         throw new Error('Session not found or no result available');
       }
       
+      // 2. Kiểm tra settlement đã được xử lý chưa (Idempotency check)
+      if (sessionDoc.processingComplete === true) {
+        console.log(`⏭️ [SETTLEMENT] Session ${sessionId} đã được xử lý settlement, skip...`);
+        return {
+          success: true,
+          sessionId,
+          result: sessionDoc.result,
+          totalTrades: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          skipped: true
+        };
+      }
+      
       const sessionResult = sessionDoc.result;
       console.log(`📊 [SETTLEMENT] Sử dụng kết quả: ${sessionResult} cho session ${sessionId}`);
 
-      // 2. Lấy tất cả trades pending trong session TRƯỚC KHI cập nhật session status
+      // 3. Lấy tất cả trades pending trong session TRƯỚC KHI cập nhật session status
       const pendingTrades = await mongoose.connection.db.collection('trades').find({ 
         sessionId, 
         status: 'pending'
@@ -380,6 +394,11 @@ async function processSettlement(settlementData) {
 
       // 6. Gửi socket events cho từng user
       console.log(`📡 [SETTLEMENT] Gửi socket events cho ${userTrades.size} users`);
+      
+      // Nếu không có trades, vẫn gửi settlement completed event
+      if (userTrades.size === 0) {
+        console.log(`📡 [SETTLEMENT] Không có trades để gửi socket events, chỉ gửi settlement completed`);
+      }
       
       for (const [userId, trades] of userTrades) {
         console.log(`📡 [SETTLEMENT] Gửi events cho user ${userId} với ${trades.length} trades`);
