@@ -122,59 +122,16 @@ async function getUserBalance(userId) {
   }
 }
 
-// HTTP endpoint để nhận event từ API
-server.on('request', (req, res) => {
-  if (req.method === 'POST' && req.url === '/emit') {
-    let body = '';
-    req.on('data', chunk => {
-      body += chunk.toString();
-    });
-    req.on('end', () => {
-      try {
-        const { userId, event, data } = JSON.parse(body);
-        
-        // ✅ Xử lý batch events
-        if (data.batch && data.events) {
-          // Gửi từng event trong batch
-          let successCount = 0;
-          for (const eventData of data.events) {
-            const success = sendToUser(userId, event, eventData);
-            if (success) successCount++;
-          }
-          
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ 
-            success: successCount > 0, 
-            processed: successCount,
-            total: data.events.length
-          }));
-        } else {
-          // Gửi single event
-          const success = sendToUser(userId, event, data);
-          
-          res.writeHead(200, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success }));
-        }
-      } catch (error) {
-        console.error('❌ Error parsing request:', error);
-        res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: false, error: error.message }));
-      }
-    });
-  } else if (req.method === 'GET' && req.url === '/health') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ 
-      status: 'ok', 
-      connections: io.engine.clientsCount,
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      version: process.version
-    }));
-  } else {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
-  }
+// ✅ Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    connections: io.engine.clientsCount,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    version: process.version
+  });
 });
 
 // Authentication middleware
