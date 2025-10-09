@@ -394,14 +394,14 @@ async function processSettlement(settlementData) {
         });
       }
 
-      // 5. Cập nhật session status thành COMPLETED (sau khi xử lý trades)
+      // 5. Cập nhật session status thành COMPLETED (KHÔNG đánh dấu processingComplete)
       const sessionUpdateResult = await mongoose.connection.db.collection('trading_sessions').updateOne(
         { sessionId },
         {
           $set: {
             status: 'COMPLETED',
             actualResult: sessionResult,
-            processingComplete: true,
+            processingComplete: false,  // ← CHƯA ĐÁNH DẤU
             totalTrades: pendingTrades.length,
             totalWins: totalWins,
             totalLosses: totalLosses,
@@ -510,6 +510,20 @@ async function processSettlement(settlementData) {
     if (result.success && result.needsSocketEvents) {
       console.log(`📡 [SETTLEMENT] Gửi socket events sau khi transaction commit...`);
       await sendSocketEventsAfterSettlement(result);
+      
+      // Đánh dấu processingComplete SAU KHI gửi socket events
+      console.log(`✅ [SETTLEMENT] Đánh dấu processingComplete sau khi gửi socket events...`);
+      await mongoose.connection.db.collection('trading_sessions').updateOne(
+        { sessionId: result.sessionId },
+        {
+          $set: {
+            processingComplete: true,
+            processingCompletedAt: new Date(),
+            updatedAt: new Date()
+          }
+        }
+      );
+      console.log(`✅ [SETTLEMENT] Đã đánh dấu processingComplete cho session ${result.sessionId}`);
     }
 
     return result;
