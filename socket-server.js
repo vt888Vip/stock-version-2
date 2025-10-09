@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
+require('dotenv').config();
 
 // Create HTTP/HTTPS server
 // Environment
@@ -63,7 +64,7 @@ const io = new Server(server, {
 });
 
 // MongoDB connection for balance snapshot on connect
-const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://vincent:vincent79@cluster0.btgvgm.mongodb.net/finacial_platform';
 let mongoConnected = false;
 async function ensureMongoConnection() {
   if (mongoConnected) return;
@@ -72,7 +73,7 @@ async function ensureMongoConnection() {
     return;
   }
   try {
-    await mongoose.connect(MONGODB_URI, {
+    await mongoose.connect(MONGODB_URI || 'mongodb+srv://vincent:vincent79@cluster0.btgvgm.mongodb.net/finacial_platform', {
       bufferCommands: false,
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
