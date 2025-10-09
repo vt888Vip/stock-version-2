@@ -307,11 +307,28 @@ const sendToUser = (userId, event, data) => {
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
     
+    // ✅ Xử lý batch events từ worker
+    if (data.batch && data.events && Array.isArray(data.events)) {
+      console.log(`📦 [BATCH] Nhận batch ${event} cho user ${userId}: ${data.events.length} events`);
+      
+      // Gửi từng event trong batch
+      data.events.forEach((eventData, index) => {
+        io.to(userRoom).emit(event, {
+          ...eventData,
+          timestamp: new Date().toISOString()
+        });
+        console.log(`📦 [BATCH] Gửi event ${index + 1}/${data.events.length} cho user ${userId}`);
+      });
+      
+      return;
+    }
+
+    // Gửi single event
     io.to(userRoom).emit(event, {
       ...data,
       timestamp: new Date().toISOString()
     });
-    
+
     // Chỉ log những events quan trọng (bỏ timer updates)
     if (event === 'trade:history:updated') {
       const action = data.action || 'update';
