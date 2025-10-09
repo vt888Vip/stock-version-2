@@ -244,30 +244,28 @@ async function processSettlement(settlementData) {
       const sessionResult = sessionDoc.result;
       console.log(`📊 [SETTLEMENT] Sử dụng kết quả: ${sessionResult} cho session ${sessionId}`);
 
-      // 2. Cập nhật session status thành COMPLETED
-      const sessionUpdateResult = await mongoose.connection.db.collection('trading_sessions').updateOne(
-        { sessionId },
-        {
-          $set: {
-            status: 'COMPLETED',
-            actualResult: sessionResult,
-            processingComplete: true,
-            updatedAt: new Date()
-          }
-        }
-      );
-
-      if (sessionUpdateResult.modifiedCount === 0) {
-        throw new Error('Session not found or already completed');
-      }
-
-      // 3. Lấy tất cả trades pending trong session
+      // 2. Lấy tất cả trades pending trong session TRƯỚC KHI cập nhật session status
       const pendingTrades = await mongoose.connection.db.collection('trades').find({ 
         sessionId, 
         status: 'pending'
       }).toArray();
 
       console.log(`📊 [SETTLEMENT] Tìm thấy ${pendingTrades.length} trades cần xử lý`);
+      
+      // Debug: Log tất cả trades trong session
+      const allTrades = await mongoose.connection.db.collection('trades').find({ 
+        sessionId 
+      }).toArray();
+      
+      console.log(`📊 [SETTLEMENT] Debug - Tất cả trades trong session ${sessionId}:`, 
+        allTrades.map(t => ({
+          tradeId: t.tradeId,
+          status: t.status,
+          appliedToBalance: t.appliedToBalance,
+          direction: t.direction,
+          amount: t.amount
+        }))
+      );
 
       let totalWins = 0;
       let totalLosses = 0;
@@ -353,17 +351,19 @@ async function processSettlement(settlementData) {
         });
       }
 
-      // 5. Cập nhật session statistics
-      await mongoose.connection.db.collection('trading_sessions').updateOne(
+      // 5. Cập nhật session status thành COMPLETED (sau khi xử lý trades)
+      const sessionUpdateResult = await mongoose.connection.db.collection('trading_sessions').updateOne(
         { sessionId },
         {
           $set: {
+            status: 'COMPLETED',
+            actualResult: sessionResult,
+            processingComplete: true,
             totalTrades: pendingTrades.length,
             totalWins: totalWins,
             totalLosses: totalLosses,
             totalWinAmount: totalWinAmount,
             totalLossAmount: totalLossAmount,
-            processingComplete: true,
             processingCompletedAt: new Date(),
             updatedAt: new Date()
           }
@@ -371,11 +371,18 @@ async function processSettlement(settlementData) {
         { session }
       );
 
+      if (sessionUpdateResult.modifiedCount === 0) {
+        throw new Error('Session not found or already completed');
+      }
+
       console.log(`✅ [SETTLEMENT] Xử lý settlement thành công: ${settlementData.id}`);
       console.log(`📊 [SETTLEMENT] Thống kê: ${pendingTrades.length} trades, ${totalWins} wins, ${totalLosses} losses`);
 
       // 6. Gửi socket events cho từng user
+      console.log(`📡 [SETTLEMENT] Gửi socket events cho ${userTrades.size} users`);
+      
       for (const [userId, trades] of userTrades) {
+        console.log(`📡 [SETTLEMENT] Gửi events cho user ${userId} với ${trades.length} trades`);
         // Gửi batch events
         await sendSocketEvent(userId, 'trades:batch:completed', {
           sessionId,
@@ -423,7 +430,8 @@ async function processSettlement(settlementData) {
       }
 
       // 7. Broadcast settlement completed to all users
-      await sendSocketEvent('all', 'session:settlement:completed', {
+      console.log(`📡 [SETTLEMENT] Gửi session:settlement:completed event`);
+      const settlementCompletedResult = await sendSocketEvent('all', 'session:settlement:completed', {
         sessionId,
         result: sessionResult,
         totals: {
@@ -435,6 +443,8 @@ async function processSettlement(settlementData) {
         },
         settledAt: new Date().toISOString()
       });
+      
+      console.log(`📡 [SETTLEMENT] Session settlement completed event sent: ${settlementCompletedResult ? 'SUCCESS' : 'FAILED'}`);
       
       return {
         success: true,
