@@ -290,6 +290,11 @@ const sendToUser = (userId, event, data) => {
       ...data,
       timestamp: new Date().toISOString()
     });
+    
+    // ✅ Debug: Log gửi event
+    if (event === 'balance:updated') {
+      console.log(`💰 [SOCKET] Emit balance:updated đến room ${userRoom} (${roomSize} clients)`);
+    }
 
     // Chỉ log những events quan trọng (bỏ timer updates)
     if (event === 'trade:history:updated') {
@@ -353,11 +358,14 @@ app.post('/emit', async (req, res) => {
         error: 'Missing required fields: userId, event, data' 
       });
     }
-    
-    console.log(`📡 [HTTP] Nhận event từ worker: ${event} cho user ${userId}`);
-    
+
     // Gửi event đến user
     const success = await sendToUser(userId, event, data);
+    
+    // ✅ Debug: Log kết quả gửi event
+    if (event === 'balance:updated') {
+      console.log(`💰 [SOCKET] Gửi balance:updated đến user ${userId}: ${success ? 'THÀNH CÔNG' : 'THẤT BẠI'}`);
+    }
     
     res.json({ success });
   } catch (error) {
