@@ -229,11 +229,51 @@ async function processSettlement(settlementData) {
 
   // ✅ KIỂM TRA IDEMPOTENCY TRƯỚC
   if (sessionDoc.processingComplete === true) {
-    console.log(`⏭️ [SETTLEMENT] Session ${sessionId} đã được xử lý settlement, bỏ qua...`);
+    console.log(`⏭️ [SETTLEMENT] Session ${sessionId} đã được xử lý settlement, gửi socket events...`);
+    
+    // Lấy thống kê từ session đã xử lý
+    const completedSession = await mongoose.connection.db.collection('trading_sessions').findOne(
+      { sessionId },
+      { 
+        totalTrades: 1, 
+        totalWins: 1, 
+        totalLosses: 1, 
+        totalWinAmount: 1, 
+        totalLossAmount: 1 
+      }
+    );
+    
+    console.log(`📊 [SETTLEMENT] Thống kê từ database:`, {
+      totalTrades: completedSession?.totalTrades || 0,
+      totalWins: completedSession?.totalWins || 0,
+      totalLosses: completedSession?.totalLosses || 0
+    });
+    
+    // Gửi socket events cho session đã xử lý
+    console.log(`📡 [SETTLEMENT] Gửi socket events cho session đã xử lý...`);
+    await sendSocketEventsAfterSettlement({
+      success: true,
+      sessionId,
+      result: sessionDoc.result,
+      totalTrades: completedSession?.totalTrades || 0,
+      totalWins: completedSession?.totalWins || 0,
+      totalLosses: completedSession?.totalLosses || 0,
+      totalWinAmount: completedSession?.totalWinAmount || 0,
+      totalLossAmount: completedSession?.totalLossAmount || 0,
+      skipped: true,
+      needsSocketEvents: true,
+      completedSession
+    });
+    
     return { 
       success: true, 
       sessionId, 
       result: sessionDoc.result, 
+      totalTrades: completedSession?.totalTrades || 0,
+      totalWins: completedSession?.totalWins || 0,
+      totalLosses: completedSession?.totalLosses || 0,
+      totalWinAmount: completedSession?.totalWinAmount || 0,
+      totalLossAmount: completedSession?.totalLossAmount || 0,
       skipped: true,
       message: 'Session already processed' 
     };
@@ -571,18 +611,52 @@ async function processSettlement(settlementData) {
  */
 async function sendSocketEventsAfterSettlement(result) {
   try {
-    const { sessionId, result: sessionResult, completedSession } = result;
+    const { sessionId, result: sessionResult, completedSession, skipped } = result;
     
     console.log(`📡 [SETTLEMENT] Gửi socket events cho settlement đã hoàn thành...`);
     
-    // Lấy danh sách users có trades trong session này
-    const sessionTrades = await mongoose.connection.db.collection('trades').find({
-      sessionId,
-      status: 'completed'
-    }).toArray();
+    let userIds = [];
+    let sessionTrades = [];
     
-    const userIds = [...new Set(sessionTrades.map(trade => trade.userId.toString()))];
-    console.log(`📡 [SETTLEMENT] Tìm thấy ${userIds.length} users có trades trong session ${sessionId}`);
+    if (skipped) {
+      // Nếu session đã được xử lý trước, lấy tất cả trades trong session
+      sessionTrades = await mongoose.connection.db.collection('trades').find({
+        sessionId
+      }).toArray();
+      userIds = [...new Set(sessionTrades.map(trade => trade.userId.toString()))];
+      console.log(`📡 [SETTLEMENT] Session đã xử lý trước - Tìm thấy ${userIds.length} users có trades trong session ${sessionId}`);
+    } else {
+      // Nếu session mới được xử lý, chỉ lấy trades completed
+      sessionTrades = await mongoose.connection.db.collection('trades').find({
+        sessionId,
+        status: 'completed'
+      }).toArray();
+      userIds = [...new Set(sessionTrades.map(trade => trade.userId.toString()))];
+      console.log(`📡 [SETTLEMENT] Session mới xử lý - Tìm thấy ${userIds.length} users có trades trong session ${sessionId}`);
+    }
+    
+    // ✅ Nếu không có users, vẫn gửi broadcast event
+    if (userIds.length === 0) {
+      console.log(`📡 [SETTLEMENT] Không có users để gửi individual events, chỉ gửi broadcast...`);
+      
+      // Gửi session:settlement:completed cho tất cả users (broadcast)
+      await sendSocketEvent('all', 'session:settlement:completed', {
+        sessionId,
+        result: sessionResult,
+        totals: {
+          totalTrades: completedSession?.totalTrades || 0,
+          totalWins: completedSession?.totalWins || 0,
+          totalLosses: completedSession?.totalLosses || 0,
+          totalWinAmount: completedSession?.totalWinAmount || 0,
+          totalLossAmount: completedSession?.totalLossAmount || 0
+        },
+        settledAt: new Date().toISOString(),
+        message: `Settlement completed for session ${sessionId} - ${completedSession?.totalTrades || 0} trades processed`
+      });
+      
+      console.log(`📡 [SETTLEMENT] Broadcast event sent for session ${sessionId}`);
+      return;
+    }
     
     // Gửi socket events cho từng user riêng biệt
     for (const userId of userIds) {
