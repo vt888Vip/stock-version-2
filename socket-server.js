@@ -5,14 +5,19 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
 const mongoose = require('mongoose');
+const express = require('express');
 require('dotenv').config();
 
 // Create HTTP/HTTPS server
 // Environment
 const isProduction = process.env.NODE_ENV === 'production';
 
+// Create Express app
+const app = express();
+app.use(express.json());
+
 // Always run HTTP internally (SSL terminates at NGINX)
-let server = createServer();
+let server = createServer(app);
 console.log(`🔓 Socket server running over HTTP internally`);
 
 // Initialize Socket.IO
@@ -379,6 +384,33 @@ const broadcastToAll = (event, data) => {
     return false;
   }
 };
+
+// ✅ HTTP endpoint để nhận events từ worker
+app.post('/emit', async (req, res) => {
+  try {
+    const { userId, event, data } = req.body;
+    
+    if (!userId || !event || !data) {
+      return res.status(400).json({ 
+        success: false, 
+        error: 'Missing required fields: userId, event, data' 
+      });
+    }
+    
+    console.log(`📡 [HTTP] Nhận event từ worker: ${event} cho user ${userId}`);
+    
+    // Gửi event đến user
+    const success = await sendToUser(userId, event, data);
+    
+    res.json({ success });
+  } catch (error) {
+    console.error(`❌ [HTTP] Error processing emit request:`, error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
 
 // Start server
 const PORT = process.env.SOCKET_PORT || 3001;
