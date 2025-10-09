@@ -548,35 +548,8 @@ export default function TradePage() {
     }
   }, [authLoading, user, router, toast]);
 
-  // ✅ SIMPLIFIED: Load balance ban đầu khi component mount
-  useEffect(() => {
-    if (!authLoading && user) {
-      const loadInitialBalance = async () => {
-        try {
-          const balanceResponse = await fetch('/api/user/balance', {
-            headers: {
-              'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-            }
-          });
-          
-          if (balanceResponse.ok) {
-            const balanceData = await balanceResponse.json();
-            if (balanceData.success) {
-              const initialBalance = balanceData.balance.available;
-              const initialFrozenBalance = balanceData.balance.frozen || 0;
-              setBalance(initialBalance);
-              setFrozenBalance(initialFrozenBalance);
-              setLastBalanceSync(Date.now());
-            }
-          }
-        } catch (error) {
-          // console.error('❌ [INIT] Lỗi khi load balance ban đầu:', error);
-        }
-      };
-
-      loadInitialBalance();
-    }
-  }, [authLoading, user]);
+  // Không fetch balance ban đầu – nhận snapshot từ socket balance:updated (snapshot: true)
+  useEffect(() => { return () => {}; }, [authLoading, user]);
 
   // ✅ COMMENTED: Tạm dừng timer polling để test Scheduler timer
   // useEffect(() => {
@@ -736,29 +709,8 @@ export default function TradePage() {
 
 
 
-  // ✅ SCHEDULER SYSTEM: Không cần trigger check-results nữa
-  // Scheduler sẽ tự động xử lý settlement
-  useEffect(() => {
-    if (timeLeft === 0) {
-      
-      // Chỉ sync balance, không cần gọi check-results
-      const syncBalanceAfterDelay = async () => {
-        try {
-          if (!isPlacingTrade) {
-            await syncBalance(setBalance, setIsSyncingBalance, setLastBalanceSync);
-          }
-        } catch (error) {
-          // console.error('Lỗi khi sync balance:', error);
-        } finally {
-          setUpdateCountdown(null);
-          setIsBalanceLocked(false);
-        }
-      };
-
-      // Sync balance sau 12 giây
-      setTimeout(syncBalanceAfterDelay, 12000);
-    }
-  }, [timeLeft, currentSessionId, toast, isPlacingTrade]);
+  // Không auto-sync balance theo timer – dữ liệu đi một luồng từ worker qua socket
+  useEffect(() => { return () => {}; }, [timeLeft, currentSessionId, toast, isPlacingTrade]);
 
 
 

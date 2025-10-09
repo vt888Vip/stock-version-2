@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
 
 // Create HTTP/HTTPS server
 // Environment
@@ -60,6 +61,48 @@ const io = new Server(server, {
   heartbeatInterval: 5000, // 5s heartbeat
   heartbeatTimeout: 10000 // 10s heartbeat timeout
 });
+
+// MongoDB connection for balance snapshot on connect
+const MONGODB_URI = process.env.MONGODB_URI;
+let mongoConnected = false;
+async function ensureMongoConnection() {
+  if (mongoConnected) return;
+  if (!MONGODB_URI) {
+    console.error('❌ MONGODB_URI is not set; cannot send balance snapshot on connect');
+    return;
+  }
+  try {
+    await mongoose.connect(MONGODB_URI, {
+      bufferCommands: false,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      retryWrites: true,
+      w: 'majority',
+      appName: 'SocketServer'
+    });
+    mongoConnected = true;
+    console.log('✅ Socket server connected to MongoDB for snapshots');
+  } catch (err) {
+    console.error('❌ Socket server failed to connect MongoDB:', err && err.message);
+  }
+}
+
+async function getUserBalance(userId) {
+  try {
+    if (!mongoConnected) await ensureMongoConnection();
+    if (!mongoConnected) return null;
+    const doc = await mongoose.connection.db.collection('users').findOne(
+      { _id: new mongoose.Types.ObjectId(userId) },
+      { projection: { balance: 1 } }
+    );
+    return doc && doc.balance ? {
+      available: doc.balance.available || 0,
+      frozen: doc.balance.frozen || 0
+    } : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // HTTP endpoint để nhận event từ API
 server.on('request', (req, res) => {
@@ -179,6 +222,21 @@ io.on('connection', (socket) => {
     message: 'Connected to trading server',
     timestamp: new Date().toISOString()
   });
+
+  // Emit balance snapshot on connect (single source of truth via socket)
+  (async () => {
+    if (!socket.userId || socket.userId === 'test-user') return;
+    const balance = await getUserBalance(socket.userId);
+    if (balance) {
+      io.to(userRoom).emit('balance:updated', {
+        userId: socket.userId,
+        snapshot: true,
+        balance,
+        message: 'Balance snapshot on connect',
+        timestamp: new Date().toISOString()
+      });
+    }
+  })();
 
   // Handle disconnect
   socket.on('disconnect', () => {
