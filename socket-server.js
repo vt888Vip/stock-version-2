@@ -90,17 +90,40 @@ async function ensureMongoConnection() {
 
 async function getUserBalance(userId) {
   try {
-    if (!mongoConnected) await ensureMongoConnection();
-    if (!mongoConnected) return null;
+    console.log(`🔍 [SOCKET] Getting balance for user: ${userId}`);
+    
+    if (!mongoConnected) {
+      console.log('🔄 [SOCKET] MongoDB not connected, attempting connection...');
+      await ensureMongoConnection();
+    }
+    
+    if (!mongoConnected) {
+      console.error('❌ [SOCKET] MongoDB connection failed');
+      return null;
+    }
+    
+    if (!mongoose.connection.db) {
+      console.error('❌ [SOCKET] MongoDB database not available');
+      return null;
+    }
+    
     const doc = await mongoose.connection.db.collection('users').findOne(
       { _id: new mongoose.Types.ObjectId(userId) },
-      { projection: { balance: 1 } }
+      { projection: { balance: 1, username: 1 } }
     );
-    return doc && doc.balance ? {
-      available: doc.balance.available || 0,
-      frozen: doc.balance.frozen || 0
-    } : null;
+    
+    if (doc) {
+      console.log(`✅ [SOCKET] User found: ${doc.username}, balance:`, doc.balance);
+      return doc.balance ? {
+        available: doc.balance.available || 0,
+        frozen: doc.balance.frozen || 0
+      } : { available: 0, frozen: 0 };
+    } else {
+      console.log(`❌ [SOCKET] User not found: ${userId}`);
+      return null;
+    }
   } catch (e) {
+    console.error(`❌ [SOCKET] Error getting user balance:`, e.message);
     return null;
   }
 }
@@ -213,9 +236,12 @@ io.use(async (socket, next) => {
 
 // Connection handler
 io.on('connection', (socket) => {
+  console.log(`🔌 [SOCKET] New connection from user: ${socket.userId}`);
+  
   // Join user-specific room
   const userRoom = `user_${socket.userId}`;
   socket.join(userRoom);
+  console.log(`🏠 [SOCKET] User ${socket.userId} joined room: ${userRoom}`);
   
   // Send connection confirmation
   socket.emit('connected', {
@@ -223,12 +249,20 @@ io.on('connection', (socket) => {
     message: 'Connected to trading server',
     timestamp: new Date().toISOString()
   });
+  console.log(`✅ [SOCKET] Connection confirmation sent to user: ${socket.userId}`);
 
   // Emit balance snapshot on connect (single source of truth via socket)
   (async () => {
-    if (!socket.userId || socket.userId === 'test-user') return;
+    if (!socket.userId || socket.userId === 'test-user') {
+      console.log(`⚠️ [SOCKET] Skipping balance snapshot for test-user or invalid user: ${socket.userId}`);
+      return;
+    }
+    
+    console.log(`💰 [SOCKET] Attempting to get balance for user: ${socket.userId}`);
     const balance = await getUserBalance(socket.userId);
+    
     if (balance) {
+      console.log(`✅ [SOCKET] Balance found for user ${socket.userId}:`, balance);
       io.to(userRoom).emit('balance:updated', {
         userId: socket.userId,
         snapshot: true,
@@ -236,6 +270,9 @@ io.on('connection', (socket) => {
         message: 'Balance snapshot on connect',
         timestamp: new Date().toISOString()
       });
+      console.log(`📡 [SOCKET] Balance snapshot sent to user: ${socket.userId}`);
+    } else {
+      console.log(`❌ [SOCKET] No balance found for user: ${socket.userId}`);
     }
   })();
 
@@ -269,9 +306,23 @@ io.on('connection', (socket) => {
 // Function to send events to specific user
 const sendToUser = (userId, event, data) => {
   try {
+    // ✅ DEBUG: Log tất cả events
+    console.log(`📡 [SOCKET] Sending event: ${event} to user: ${userId}`, {
+      event,
+      userId,
+      data: {
+        balance: data.balance,
+        profit: data.profit,
+        result: data.result,
+        tradeId: data.tradeId,
+        sequence: data.sequence
+      },
+      timestamp: new Date().toISOString()
+    });
+    
     // ✅ FIX: Hỗ trợ broadcast to all users
     if (userId === 'all') {
-      // console.log(`📡 [SOCKET] Broadcasting ${event} to all users`);
+      console.log(`📡 [SOCKET] Broadcasting ${event} to all users`);
       io.emit(event, {
         ...data,
         timestamp: new Date().toISOString()
@@ -281,7 +332,7 @@ const sendToUser = (userId, event, data) => {
     
     // ✅ THÊM: Hỗ trợ gửi event chỉ đến admin users
     if (userId === 'admin') {
-      // console.log(`👑 [SOCKET] Sending ${event} to admin users only`);
+      console.log(`👑 [SOCKET] Sending ${event} to admin users only`);
       // Gửi đến tất cả users có role admin
       io.emit(event, {
         ...data,
@@ -294,25 +345,28 @@ const sendToUser = (userId, event, data) => {
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
     
+    console.log(`🏠 [SOCKET] Room ${userRoom} has ${roomSize} connections`);
+    
     io.to(userRoom).emit(event, {
       ...data,
       timestamp: new Date().toISOString()
     });
     
-    // Chỉ log những events quan trọng
+    // Log những events quan trọng
     if (event === 'trade:history:updated') {
       const action = data.action || 'update';
       const tradeCount = data.trade ? 1 : (data.trades ? data.trades.length : 0);
-      // console.log(`📊 [LỊCH SỬ] ${action === 'add' ? 'Thêm' : 'Cập nhật'} ${tradeCount} giao dịch cho user ${userId}`);
+      console.log(`📊 [LỊCH SỬ] ${action === 'add' ? 'Thêm' : 'Cập nhật'} ${tradeCount} giao dịch cho user ${userId}`);
     } else if (event === 'balance:updated') {
       const profit = data.profit || data.totalProfit || 0;
       const tradeCount = data.tradeCount || 1;
       const result = data.result || 'unknown';
-      // console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profit >= 0 ? '+' : ''}${profit.toLocaleString()} VND (${result}, ${tradeCount} giao dịch)`);
+      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profit >= 0 ? '+' : ''}${profit.toLocaleString()} VND (${result}, ${tradeCount} giao dịch)`);
     } else if (event === 'session:timer:update') {
-      // console.log(`⏰ [SOCKET] Timer update sent to ${userId === 'all' ? 'all users' : `user ${userId}`}: ${data.timeLeft}s for session ${data.sessionId}`);
+      console.log(`⏰ [SOCKET] Timer update sent to ${userId === 'all' ? 'all users' : `user ${userId}`}: ${data.timeLeft}s for session ${data.sessionId}`);
     }
     
+    console.log(`✅ [SOCKET] Event ${event} sent successfully to user ${userId}`);
     return true;
   } catch (error) {
     console.error(`❌ Error sending ${event} to user ${userId}:`, error);
