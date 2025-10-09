@@ -25,7 +25,6 @@ const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
 const REDIS_DB = parseInt(process.env.REDIS_DB || '0');
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
-const SETTLEMENTS_QUEUE = 'settlements';
 const TRADE_PROCESSING_QUEUE = 'trade-processing';
 const SOCKET_SERVER_URL = process.env.SOCKET_SERVER_URL || (process.env.NODE_ENV === 'production' 
   ? 'http://127.0.0.1:3001' 
@@ -173,7 +172,6 @@ async function connectMongoDB() {
 async function resetQueues() {
   try {
     console.log('🧹 Đang xóa queues cũ...');
-    await channel.deleteQueue(SETTLEMENTS_QUEUE);
     await channel.deleteQueue(TRADE_PROCESSING_QUEUE);
     console.log('✅ Đã xóa queues cũ');
   } catch (error) {
@@ -202,12 +200,6 @@ async function connectRabbitMQ() {
     // Xóa và tạo lại queues để tránh xung đột
     await resetQueues();
     
-    // Tạo queue settlements
-    await channel.assertQueue(SETTLEMENTS_QUEUE, {
-      durable: true,
-      maxPriority: 10
-    });
-
     // Tạo queue trade-processing
     await channel.assertQueue(TRADE_PROCESSING_QUEUE, {
       durable: true,
@@ -359,24 +351,6 @@ async function markTradeProcessed(tradeId, ttl = 3600) {
   }
 }
 
-async function getSessionResultFromCache(sessionId) {
-  try {
-    const sessionKey = `session:${sessionId}:result`;
-    return await redisClient.get(sessionKey);
-  } catch (error) {
-    console.error(`❌ Failed to get session result from cache ${sessionId}:`, error);
-    return null;
-  }
-}
-
-async function setSessionResultToCache(sessionId, result, ttl = 7200) {
-  try {
-    const sessionKey = `session:${sessionId}:result`;
-    await redisClient.set(sessionKey, result, { EX: ttl });
-  } catch (error) {
-    console.error(`❌ Failed to set session result to cache ${sessionId}:`, error);
-  }
-}
 
 /**
  * Xử lý place trade trực tiếp với Redis lock
@@ -535,460 +509,8 @@ async function processPlaceTrade(tradeData) {
   }
 }
 
-/**
- * Xử lý check result trực tiếp (không qua queue) cho một trade
- */
-async function processCheckResultDirect(tradeId, userId, sessionId, amount, type) {
-  const session = await mongoose.startSession();
-  try {
-    return await session.withTransaction(async () => {
-      // 1) Lấy trade
-      const trade = await mongoose.connection.db.collection('trades').findOne({ tradeId });
-      if (!trade) {
-        throw new Error(`Trade not found: ${tradeId}`);
-      }
 
-      // Nếu đã completed/failed thì trả sớm
-      if (trade.status === 'completed' || trade.status === 'failed') {
-        return { success: true, tradeId, message: 'Trade already processed', isWin: trade.result?.isWin ?? null, profit: trade.profit ?? 0, sessionResult: trade.result?.sessionResult ?? null };
-      }
 
-      // 2) Đặt status processing
-      await mongoose.connection.db.collection('trades').updateOne(
-        { tradeId },
-        { $set: { status: 'processing', updatedAt: new Date() } },
-        { session }
-      );
-
-      // 3) Lấy session result
-      const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
-        { sessionId },
-        { result: 1 }
-      );
-      if (!sessionDoc || !sessionDoc.result) {
-        throw new Error(`Session result not available: ${sessionId}`);
-      }
-      const sessionResult = sessionDoc.result;
-
-      // 4) Tính kết quả
-      const userPrediction = type === 'buy' ? 'UP' : 'DOWN';
-      const isWin = userPrediction === sessionResult;
-      const profit = isWin ? Math.floor(amount * 0.9) : -amount;
-
-      // 5) Cập nhật balance
-      if (isWin) {
-        await mongoose.connection.db.collection('users').updateOne(
-          { _id: new mongoose.Types.ObjectId(userId) },
-          {
-            $inc: { 'balance.frozen': -amount, 'balance.available': amount + profit },
-            $set: { updatedAt: new Date() }
-          },
-          { session }
-        );
-      } else {
-        await mongoose.connection.db.collection('users').updateOne(
-          { _id: new mongoose.Types.ObjectId(userId) },
-          {
-            $inc: { 'balance.frozen': -amount },
-            $set: { updatedAt: new Date() }
-          },
-          { session }
-        );
-      }
-
-      // 6) Cập nhật trade
-      await mongoose.connection.db.collection('trades').updateOne(
-        { tradeId },
-        {
-          $set: {
-            status: 'completed',
-            processedAt: new Date(),
-            profit: profit,
-            appliedToBalance: true,
-            result: { isWin, profit, sessionResult, processedAt: new Date() }
-          }
-        },
-        { session }
-      );
-
-      // 7) Cập nhật thống kê session
-      await mongoose.connection.db.collection('trading_sessions').updateOne(
-        { sessionId },
-        {
-          $inc: {
-            totalTrades: 1,
-            totalWins: isWin ? 1 : 0,
-            totalLosses: isWin ? 0 : 1,
-            totalWinAmount: isWin ? amount : 0,
-            totalLossAmount: isWin ? 0 : amount
-          }
-        },
-        { session }
-      );
-
-      return { success: true, tradeId, isWin, profit, sessionResult };
-    });
-  } catch (error) {
-    console.error(`❌ [CHECK-RESULT-DIRECT] Lỗi:`, error.message);
-    return { success: false, error: error.message };
-  } finally {
-    await session.endSession();
-  }
-}
-
-/**
- * Xử lý check result (kiểm tra kết quả) với Redis atomic operations
- */
-async function processCheckResult(tradeData) {
-  const { tradeId, userId, sessionId, amount, type } = tradeData;
-  
-  try {
-    console.log(`🔍 [CHECK-RESULT] Bắt đầu xử lý check result: ${tradeData.tradeId}`);
-    
-    // Idempotency: skip if already processed
-    const processedKey = `trade:${tradeId}:processed`;
-    const alreadyProcessed = await redisClient.exists(processedKey);
-    if (alreadyProcessed === 1) {
-      console.log(`✅ [CHECK-RESULT] Already processed, skipping: ${tradeId}`);
-      return { success: true, message: 'Already processed' };
-    }
-
-    // Sử dụng Redis lock trực tiếp
-    const lockKey = `trade:${tradeId}:processing`;
-    const lockAcquired = await acquireLock(lockKey, 30000);
-    
-    if (!lockAcquired) {
-      console.log(`❌ [CHECK-RESULT] Không thể acquire lock cho trade ${tradeId}`);
-      return {
-        success: false,
-        error: 'Trade is being processed by another request'
-      };
-    }
-    
-    let result;
-    try {
-      result = await processCheckResultDirect(tradeId, userId, sessionId, amount, type);
-    } finally {
-      await releaseLock(lockKey);
-    }
-    
-    if (result && result.success) {
-      // Mark idempotency flag with TTL (1h)
-      await redisClient.set(processedKey, 'true', { EX: 3600 });
-      // Gửi Socket.IO events
-      await sendSocketEvent(userId, 'trade:completed', {
-        tradeId,
-        sessionId,
-        result: result.isWin ? 'win' : 'lose',
-        profit: result.profit,
-        amount: amount,
-        direction: type === 'buy' ? 'UP' : 'DOWN',
-        message: result.isWin ? '🎉 Thắng!' : '😔 Thua'
-      });
-
-      const balanceEventResult = await sendSocketEvent(userId, 'balance:updated', {
-        tradeId,
-        profit: result.profit,
-        amount: amount,
-        result: result.isWin ? 'win' : 'lose',
-        message: `Balance đã được cập nhật: ${result.isWin ? '+' : ''}${result.profit} VND`
-      });
-      
-      if (!balanceEventResult) {
-        console.error(`❌ [CHECK-RESULT] Failed to send balance:updated event for trade ${tradeId}`);
-      }
-
-      await sendSocketEvent(userId, 'trade:history:updated', {
-        action: 'update',
-        trade: {
-          id: tradeId,
-          tradeId: tradeId,
-          sessionId,
-          direction: type === 'buy' ? 'UP' : 'DOWN',
-          amount: amount,
-          status: 'completed',
-          result: result.isWin ? 'win' : 'lose',
-          profit: result.profit,
-          createdAt: new Date().toISOString()
-        },
-        message: 'Lịch sử giao dịch đã được cập nhật'
-      });
-
-      console.log(`✅ [CHECK-RESULT] Check result thành công:`, {
-        tradeId,
-        isWin: result.isWin,
-        profit: result.profit,
-        sessionResult: result.sessionResult
-      });
-    } else if (result) {
-      console.log(`❌ [CHECK-RESULT] Check result thất bại: ${result.error}`);
-      
-      // Cập nhật trade status thành failed
-      try {
-        await mongoose.connection.db.collection('trades').updateOne(
-          { tradeId: tradeData.tradeId },
-          {
-            $set: {
-              status: 'failed',
-              errorMessage: result.error,
-              updatedAt: new Date()
-            }
-          }
-        );
-      } catch (updateError) {
-        console.error('❌ Không thể cập nhật trade status:', updateError);
-      }
-    }
-    
-    return result;
-  } catch (error) {
-    console.error(`❌ [CHECK-RESULT] Lỗi xử lý check result ${tradeData.tradeId}:`, error.message);
-    
-    // Cập nhật trade status thành failed
-    try {
-      await mongoose.connection.db.collection('trades').updateOne(
-        { tradeId: tradeData.tradeId },
-        {
-          $set: {
-            status: 'failed',
-            errorMessage: error.message,
-            updatedAt: new Date()
-          }
-        }
-      );
-    } catch (updateError) {
-      console.error('❌ Không thể cập nhật trade status:', updateError);
-    }
-    
-    return {
-      success: false,
-      error: error.message
-    };
-  }
-}
-
-async function processSettlement(settlementData) {
-  const { sessionId } = settlementData;
-  
-  // ✅ FIX: Thêm Redis lock cho settlement để tránh race condition
-  const settlementLockKey = `settlement:${sessionId}`;
-  const lockAcquired = await acquireLock(settlementLockKey, 60000); // 60s timeout
-  
-  if (!lockAcquired) {
-    console.log(`❌ [SETTLEMENT] Không thể acquire lock cho session ${sessionId}`);
-    return { success: false, error: 'Settlement is being processed by another worker' };
-  }
-  
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log(`🔄 [SETTLEMENT] Bắt đầu xử lý settlement: ${settlementData.id}`);
-    
-    const result = await session.withTransaction(async () => {
-
-      // 1. Lấy kết quả có sẵn từ session
-      const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
-        { sessionId },
-        { result: 1 }
-      );
-      
-      if (!sessionDoc || !sessionDoc.result) {
-        throw new Error('Session not found or no result available');
-      }
-      
-      const sessionResult = sessionDoc.result;
-      console.log(`📊 [SETTLEMENT] Sử dụng kết quả có sẵn: ${sessionResult} cho session ${sessionId}`);
-
-      // 2. Cập nhật session status
-      const sessionUpdateResult = await mongoose.connection.db.collection('trading_sessions').updateOne(
-        { sessionId },
-        {
-          $set: {
-            status: 'COMPLETED',
-            actualResult: sessionResult,
-            processingComplete: true,
-            updatedAt: new Date()
-          }
-        }
-      );
-
-      if (sessionUpdateResult.modifiedCount === 0) {
-        throw new Error('Session not found or already completed');
-      }
-
-      // 2. Lấy tất cả trades completed trong session chưa được gửi events
-      const completedTrades = await mongoose.connection.db.collection('trades').find({ 
-        sessionId, 
-        status: 'completed',
-        appliedToBalance: true,
-        eventsSent: { $ne: true } // Chưa gửi events
-      }).toArray();
-
-      console.log(`📊 [SETTLEMENT] Tìm thấy ${completedTrades.length} trades cần gửi events`);
-
-      let totalWins = 0;
-      let totalLosses = 0;
-      let totalWinAmount = 0;
-      let totalLossAmount = 0;
-
-             // 3. Gửi events cho từng trade đã completed
-       for (const trade of completedTrades) {
-         // ✅ Chỉ gửi events, không xử lý trades (đã được xử lý real-time)
-         const isWin = trade.result === 'win';
-         const profit = trade.profit || 0;
-
-         // Cập nhật thống kê
-         if (isWin) {
-           totalWins++;
-           totalWinAmount += trade.amount;
-         } else {
-           totalLosses++;
-           totalLossAmount += trade.amount;
-         }
-
-         console.log(`✅ [SETTLEMENT] Gửi events cho trade ${trade._id}: ${isWin ? 'WIN' : 'LOSE'} ${trade.amount}`);
-      }
-
-      // 4. Cập nhật session statistics và đánh dấu hoàn thành
-      await mongoose.connection.db.collection('trading_sessions').updateOne(
-        { sessionId },
-        {
-          $set: {
-            totalTrades: completedTrades.length,
-            totalWins: totalWins,
-            totalLosses: totalLosses,
-            totalWinAmount: totalWinAmount,
-            totalLossAmount: totalLossAmount,
-            processingComplete: true,
-            processingCompletedAt: new Date(),
-            updatedAt: new Date()
-          }
-        }
-      );
-
-      console.log(`✅ [SETTLEMENT] Xử lý settlement thành công: ${settlementData.id}`);
-      console.log(`📊 [SETTLEMENT] Thống kê: ${completedTrades.length} trades, ${totalWins} wins, ${totalLosses} losses`);
-
-        // ✅ Gửi events cho trades đã completed
-        const userTrades = new Map();
-        
-        // Group trades by user
-        for (const trade of completedTrades) {
-          const userId = trade.userId.toString();
-          if (!userTrades.has(userId)) {
-            userTrades.set(userId, []);
-          }
-          
-          userTrades.get(userId).push({
-            tradeId: trade.tradeId || trade._id.toString(),
-            sessionId,
-            result: trade.result,
-            profit: trade.profit,
-            amount: trade.amount,
-            direction: trade.direction,
-            status: 'completed',
-            createdAt: trade.createdAt
-          });
-        }
-        
-        // Send batch events to each user
-        for (const [userId, trades] of userTrades) {
-          await sendSocketEvent(userId, 'trades:batch:completed', {
-            sessionId,
-            trades: trades,
-            totalTrades: trades.length,
-            totalWins: trades.filter(t => t.result === 'win').length,
-            totalLosses: trades.filter(t => t.result === 'lose').length,
-            message: `Đã xử lý ${trades.length} trades cho session ${sessionId}`
-          });
-          
-          // ✅ Gửi balance:updated với snapshot số dư mới nhất từ DB sau khi xử lý batch
-          const userDoc = await mongoose.connection.db.collection('users').findOne(
-            { _id: new mongoose.Types.ObjectId(userId) },
-            { projection: { balance: 1 } }
-          );
-
-          await sendSocketEvent(userId, 'balance:updated', {
-            userId,
-            sessionId,
-            tradeCount: trades.length,
-            message: `Balance đã được cập nhật sau settlement (${trades.length} trades)`,
-            balance: {
-              available: userDoc?.balance?.available ?? null,
-              frozen: userDoc?.balance?.frozen ?? null
-            }
-          });
-          
-          // ✅ FIX: Gửi trade:history:updated cho từng trade
-          for (const trade of trades) {
-            await sendSocketEvent(userId, 'trade:history:updated', {
-              action: 'update',
-              trade: {
-                id: trade.tradeId,
-                tradeId: trade.tradeId,
-                sessionId: trade.sessionId,
-                direction: trade.direction,
-                amount: trade.amount,
-                status: trade.status,
-                result: trade.result,
-                profit: trade.profit,
-                createdAt: trade.createdAt
-              }
-            });
-          }
-        }
-
-        // ✅ Đánh dấu trades đã gửi events
-        if (completedTrades.length > 0) {
-          await mongoose.connection.db.collection('trades').updateMany(
-            { 
-              _id: { $in: completedTrades.map(t => t._id) }
-            },
-            { 
-              $set: { eventsSent: true }
-            }
-          );
-        }
-
-        // ✅ ALWAYS: Broadcast settlement completed to all users (kể cả khi 0 trades)
-        await sendSocketEvent('all', 'session:settlement:completed', {
-          sessionId,
-          result: sessionResult,
-          totals: {
-            totalTrades: completedTrades.length,
-            totalWins,
-            totalLosses,
-            totalWinAmount,
-            totalLossAmount
-          },
-          settledAt: new Date().toISOString()
-        });
-        
-        return {
-          success: true,
-          sessionId,
-          result: sessionResult,
-          totalTrades: pendingTrades.length,
-          totalWins,
-          totalLosses,
-          totalWinAmount,
-          totalLossAmount
-        };
-    });
-
-    return result;
-  } catch (error) {
-    console.error(`❌ [SETTLEMENT] Lỗi xử lý settlement ${settlementData.id}:`, error.message);
-    return {
-      success: false,
-      error: error.message
-    };
-  } finally {
-    await session.endSession();
-    // ✅ FIX: Release settlement lock
-    await releaseLock(settlementLockKey);
-  }
-}
 
 // ✅ FIX: Sequence counter để tránh race condition
 let sequenceCounter = 0;
@@ -1127,7 +649,7 @@ async function startWorker() {
           action: tradeData.action
         });
         
-                 // Kiểm tra action
+                 // Chỉ xử lý place-trade
          if (tradeData.action === 'place-trade') {
            console.log(`📝 [TRADE] Xử lý place-trade cho trade: ${tradeData.tradeId}`);
            const result = await processPlaceTrade(tradeData);
@@ -1139,19 +661,6 @@ async function startWorker() {
              });
            } else {
              console.error(`❌ [TRADE] Place-trade thất bại: ${tradeData.tradeId} - ${result.error}`);
-           }
-         } else if (tradeData.action === 'check-result') {
-           console.log(`🔍 [TRADE] Xử lý check-result cho trade: ${tradeData.tradeId}`);
-           const result = await processCheckResult(tradeData);
-           
-           if (result.success) {
-             console.log(`✅ [TRADE] Check-result thành công:`, {
-               tradeId: result.tradeId,
-               isWin: result.isWin,
-               profit: result.profit
-             });
-           } else {
-             console.error(`❌ [TRADE] Check-result thất bại: ${tradeData.tradeId} - ${result.error}`);
            }
          } else {
            console.error(`❌ [TRADE] Action không hợp lệ: ${tradeData.action}`);
@@ -1165,47 +674,10 @@ async function startWorker() {
       }
     });
     
-    // Consumer cho settlements
-    channel.consume(SETTLEMENTS_QUEUE, async (msg) => {
-      if (!msg) return;
-      
-      try {
-        const settlementData = JSON.parse(msg.content.toString());
-        console.log(`📥 [SETTLEMENTS] Nhận settlement message:`, {
-          id: settlementData.id,
-          sessionId: settlementData.sessionId,
-          result: settlementData.result,
-          timestamp: settlementData.timestamp
-        });
-        
-        console.log(`🔄 [SETTLEMENTS] Bắt đầu xử lý settlement: ${settlementData.sessionId}`);
-        
-        const result = await processSettlement(settlementData);
-        
-        if (result.success) {
-          console.log(`✅ [SETTLEMENTS] Xử lý settlement thành công:`, {
-            sessionId: result.sessionId,
-            result: result.result,
-            totalTrades: result.totalTrades,
-            totalWins: result.totalWins,
-            totalLosses: result.totalLosses
-          });
-        } else {
-          console.error(`❌ [SETTLEMENTS] Xử lý settlement thất bại: ${settlementData.id} - ${result.error}`);
-        }
-        
-        channel.ack(msg);
-        console.log(`✅ [SETTLEMENTS] Đã acknowledge message: ${settlementData.id}`);
-      } catch (error) {
-        console.error(`❌ [SETTLEMENTS] Lỗi xử lý message:`, error);
-        channel.ack(msg); // Acknowledge để tránh loop
-      }
-    });
     
     console.log(`🎉 Worker ${workerId} đã khởi động thành công!`);
     console.log('📋 Đang lắng nghe:');
     console.log(`   - Trade processing queue: ${TRADE_PROCESSING_QUEUE}`);
-    console.log(`   - Settlements queue: ${SETTLEMENTS_QUEUE}`);
     
   } catch (error) {
     console.error('❌ Lỗi khởi động worker:', error);

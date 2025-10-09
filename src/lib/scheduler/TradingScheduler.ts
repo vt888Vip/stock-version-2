@@ -409,9 +409,19 @@ export class TradingScheduler {
         tradeCount: pendingTrades.length
       };
 
+      console.log(`📤 [SCHEDULER] Gửi settlement message cho session ${sessionId}:`, settlementData);
       const success = await publishSettlementMessage(settlementData);
+      console.log(`📤 [SCHEDULER] Settlement message result: ${success ? 'SUCCESS' : 'FAILED'}`);
       
       if (success) {
+        console.log(`✅ [SCHEDULER] Settlement message sent successfully for session ${sessionId}`);
+        console.log(`📊 [SCHEDULER] Settlement data:`, {
+          sessionId,
+          result: session.result,
+          tradeCount: pendingTrades.length,
+          timestamp: settlementData.timestamp
+        });
+        
         this.notifyFrontend(sessionId, 'session:settlement:triggered', {
           sessionId,
           result: session.result,
