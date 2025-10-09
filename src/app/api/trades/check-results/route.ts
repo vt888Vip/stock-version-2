@@ -135,50 +135,9 @@ export async function POST(request: NextRequest): Promise<NextResponse<CheckResu
       direction: trade.direction || (trade.type === 'buy' ? 'UP' : 'DOWN')
     }));
 
-    // 7. Gửi chỉ trades chưa xử lý vào queue để xử lý kết quả an toàn
+    // 7. Chỉ trả về kết quả, KHÔNG xử lý settlement
     console.log(`📊 [CHECK-RESULTS] Tổng số trades: ${trades.length}`);
-    
-    // ✅ SỬA: Chỉ gửi trades chưa completed hoặc chưa appliedToBalance
-    const unsettledTrades = trades.filter(trade => 
-      trade.status === 'pending' || 
-      (trade.status === 'completed' && !trade.appliedToBalance)
-    );
-    
-    console.log(`📊 [CHECK-RESULTS] Trades cần xử lý: ${unsettledTrades.length}`);
-    
-    // Gửi message cho trades chưa xử lý
-    for (const trade of unsettledTrades) {
-      try {
-        const queueData = {
-          tradeId: trade.tradeId,
-          userId: userId,
-          sessionId: trade.sessionId,
-          amount: trade.amount,
-          type: trade.type,
-          action: 'check-result'
-        };
-
-        // Auto-initialize RabbitMQ connection
-        const { initializeRabbitMQ } = await import('@/lib/rabbitmq-auto-init');
-        await initializeRabbitMQ();
-        
-        console.log(`🧪 [CHECK-RESULTS] Gửi message cho trade: ${trade.tradeId} (status: ${trade.status})`);
-
-        const published = await publishTradeToQueue(queueData);
-        
-        if (published) {
-          console.log(`✅ [CHECK-RESULTS] Đã gửi trade ${trade.tradeId} vào queue để xử lý`);
-        } else {
-          console.log(`❌ [CHECK-RESULTS] Không thể gửi trade ${trade.tradeId} vào queue`);
-        }
-      } catch (error) {
-        console.error(`❌ [CHECK-RESULTS] Lỗi gửi trade ${trade.tradeId} vào queue:`, error);
-      }
-    }
-
-    // 8. Worker đã gửi Socket.IO events rồi, không cần gửi lại
-    // Worker sẽ gửi: trade:completed, balance:updated, trade:history:updated
-    console.log(`📡 [CHECK-RESULTS] Worker đã gửi Socket.IO events cho ${results.filter(r => r.status === 'completed').length} trades hoàn thành`);
+    console.log(`📊 [CHECK-RESULTS] Chỉ trả về kết quả, không xử lý settlement`);
 
     // 9. Return response
     const response: CheckResultsResponse = {
