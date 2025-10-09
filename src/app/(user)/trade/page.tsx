@@ -184,7 +184,7 @@ export default function TradePage() {
     }
   };
 
-  // ✅ FIX: Debounce balance updates để tránh fetch quá nhiều
+  // Không dùng debounce refetch nữa – cập nhật trực tiếp từ payload worker
   const [balanceUpdateTimeout, setBalanceUpdateTimeout] = useState<NodeJS.Timeout | null>(null);
 
   // Listen for balance:updated events from Socket.IO
@@ -212,7 +212,14 @@ export default function TradePage() {
         setLastSequence(sequence);
       }
       
-      // ✅ FIX: Chỉ cập nhật trade results, KHÔNG tự tính balance
+      // Cập nhật trực tiếp balance từ payload worker (không refetch)
+      if (event.detail.balance) {
+        const { available, frozen } = event.detail.balance;
+        if (typeof available === 'number') setBalance(available);
+        if (typeof frozen === 'number') setFrozenBalance(frozen);
+      }
+
+      // Chỉ cập nhật trade results, KHÔNG tự tính balance
       setTradeResults(prev => {
         // ✅ SỬA: Check duplicate trước khi thêm
         const existingIndex = prev.findIndex(r => r.tradeId === event.detail.tradeId);
@@ -243,24 +250,12 @@ export default function TradePage() {
         }
       });
       
-      // ✅ FIX: Debounce fetch balance từ server (giảm delay để real-time hơn)
-      if (balanceUpdateTimeout) {
-        clearTimeout(balanceUpdateTimeout);
-      }
-      
-      const timeout = setTimeout(() => {
-        fetchBalanceFromServer();
-      }, 500); // Giảm từ 1s xuống 500ms để real-time hơn
-      
-      setBalanceUpdateTimeout(timeout);
+      // Không refetch nữa để tránh race; tin tưởng payload duy nhất từ worker
     };
 
     const handleTradePlaced = (event: CustomEvent) => {
       const { tradeId, sessionId, direction, amount, type } = event.detail;
       // console.log('🔍 [DEBUG] handleTradePlaced called with:', event.detail);
-      
-      // ✅ FIX: Fetch balance từ server thay vì tự tính
-      fetchBalanceFromServer();
       
       // Thêm trade mới vào trade history
       const newTradeRecord: TradeHistoryRecord = {
@@ -310,9 +305,6 @@ export default function TradePage() {
       if (sequence) {
         setLastSequence(sequence);
       }
-      
-      // ✅ FIX: Fetch balance từ server thay vì tự tính
-      fetchBalanceFromServer();
       
       // ✅ FIX: Thêm trade result mới vào danh sách
       setTradeResults(prev => [
@@ -445,12 +437,10 @@ export default function TradePage() {
           }
         });
         
-        // console.log('📊 [TRADE RESULTS] Batch updated:', newResults);
-        return newResults;
-      });
-       // ✅ Refetch ngay để đồng bộ số dư và lịch sử sau batch
-      try { fetchBalanceFromServer(); } catch {}
-      try { fetchTradeHistoryFromServer?.(); } catch {}
+      // console.log('📊 [TRADE RESULTS] Batch updated:', newResults);
+      return newResults;
+    });
+      // Không refetch sau batch; số dư sẽ được cập nhật qua balance:updated
     };
 
     // Add event listeners
@@ -470,43 +460,20 @@ export default function TradePage() {
     };
   }, [lastSequence]);
 
-  // ✅ Lắng nghe công bố kết quả để refetch tức thì
+  // Không refetch khi settlement completed – data đi một luồng từ worker
   useEffect(() => {
-    const onSettlementCompleted = (e: CustomEvent) => {
-      try { fetchBalanceFromServer(); } catch {}
-      try { fetchTradeHistoryFromServer?.(); } catch {}
-      try { fetchSessionInfoFromServer?.(); } catch {}
-    };
+    const onSettlementCompleted = (e: CustomEvent) => {};
     window.addEventListener('session:settlement:completed', onSettlementCompleted as EventListener);
     return () => window.removeEventListener('session:settlement:completed', onSettlementCompleted as EventListener);
   }, []);
 
-  // ✅ FIX: Reconnection handling - fetch balance khi socket reconnect (với delay)
+  // Không refetch khi reconnect socket – sẽ đợi balance:updated từ server
   useEffect(() => {
-    if (socket?.connected) {
-      // Delay 2 giây để tránh conflict với Socket.IO events
-      const timeout = setTimeout(() => {
-        // console.log('🔄 Socket reconnected, fetching balance from server');
-        fetchBalanceFromServer();
-      }, 2000);
-      
-      return () => clearTimeout(timeout);
-    }
+    return () => {};
   }, [socket?.connected]);
 
-  // ✅ FIX: Periodic sync - fetch balance mỗi 60 giây để đảm bảo đồng bộ (giảm frequency)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      // Chỉ sync nếu không có Socket.IO events gần đây
-      const timeSinceLastSync = Date.now() - lastBalanceSync;
-      if (timeSinceLastSync > 30000) { // Chỉ sync nếu > 30s không có update
-        // console.log('🔄 Periodic balance sync (no recent updates)');
-        fetchBalanceFromServer();
-      }
-    }, 60000); // Sync mỗi 60 giây
-    
-    return () => clearInterval(interval);
-  }, [lastBalanceSync]);
+  // Tắt periodic sync – giữ 1 luồng dữ liệu từ worker
+  useEffect(() => { return () => {}; }, [lastBalanceSync]);
 
   // Load user balance and current session
   useEffect(() => {
