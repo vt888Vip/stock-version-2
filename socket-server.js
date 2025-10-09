@@ -321,11 +321,24 @@ const sendToUser = (userId, event, data) => {
       const profit = data.profit || data.totalProfit || 0;
       const tradeCount = data.tradeCount || 1;
       const result = data.result || 'unknown';
-      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profit >= 0 ? '+' : ''}${profit.toLocaleString()} VND (${result}, ${tradeCount} giao dịch)`);
+      const profitText = profit >= 0 ? `+${profit.toLocaleString()}` : `${profit.toLocaleString()}`;
+      const statusText = result === 'win' ? 'THẮNG' : result === 'lose' ? 'THUA' : 'UNKNOWN';
+      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profitText} VND (${statusText}, ${tradeCount} giao dịch)`);
     } else if (event === 'trade:placed') {
-      console.log(`📈 [TRADE] Đặt lệnh thành công cho user ${userId}: ${data.amount} VND (${data.direction})`);
+      const amount = data.amount || data.amount || 0;
+      console.log(`📈 [TRADE] Đặt lệnh thành công cho user ${userId}: ${amount.toLocaleString()} VND (${data.direction})`);
     } else if (event === 'trades:batch:completed') {
       console.log(`✅ [BATCH] Hoàn tất xử lý batch cho user ${userId}: ${data.trades?.length || 0} giao dịch`);
+    } else if (event === 'session:settlement:triggered') {
+      console.log(`🔄 [SETTLEMENT] Bắt đầu settlement cho session ${data.sessionId}`);
+    } else if (event === 'session:settlement:completed') {
+      console.log(`✅ [SETTLEMENT] Hoàn tất settlement cho session ${data.sessionId} - Kết quả: ${data.result}`);
+    } else if (event === 'trade:completed') {
+      const profit = data.profit || 0;
+      const result = data.result || 'unknown';
+      const profitText = profit >= 0 ? `+${profit.toLocaleString()}` : `${profit.toLocaleString()}`;
+      const statusText = result === 'win' ? 'THẮNG' : result === 'lose' ? 'THUA' : 'UNKNOWN';
+      console.log(`🎯 [SETTLEMENT] Giao dịch hoàn tất cho user ${userId}: ${statusText} - Lợi nhuận: ${profitText} VND`);
     }
     
     return true;
