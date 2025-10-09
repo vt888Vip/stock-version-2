@@ -859,6 +859,12 @@ async function processTrade(tradeData) {
         );
       }
 
+      // ✅ Lấy lại số dư mới nhất sau khi cập nhật để gửi qua socket
+      const userAfterUpdate = await mongoose.connection.db.collection('users').findOne(
+        { _id: new mongoose.Types.ObjectId(userId) },
+        { projection: { balance: 1 } }
+      );
+
       // 8. Cập nhật trade với kết quả
       await mongoose.connection.db.collection('trades').updateOne(
         { tradeId },
@@ -915,7 +921,13 @@ async function processTrade(tradeData) {
         profit: profit,
         amount: amount, // ✅ THÊM: Số tiền đặt lệnh để frontend tính balance đúng
         result: isWin ? 'win' : 'lose',
-        message: `Balance đã được cập nhật: ${isWin ? '+' : ''}${profit} VND`
+        message: `Balance đã được cập nhật: ${isWin ? '+' : ''}${profit} VND`,
+        // ✅ Gửi kèm snapshot số dư mới nhất để frontend cập nhật trực tiếp
+        balance: {
+          available: userAfterUpdate?.balance?.available ?? null,
+          frozen: userAfterUpdate?.balance?.frozen ?? null
+        },
+        userId
       });
 
       // ✅ THÊM: Gửi balance:updated event chỉ đến admin khi settlement
@@ -925,7 +937,11 @@ async function processTrade(tradeData) {
         profit: profit,
         amount: amount,
         result: isWin ? 'win' : 'lose',
-        message: `User ${userId} ${isWin ? 'thắng' : 'thua'} ${Math.abs(profit).toLocaleString()} VND`
+        message: `User ${userId} ${isWin ? 'thắng' : 'thua'} ${Math.abs(profit).toLocaleString()} VND`,
+        balance: {
+          available: userAfterUpdate?.balance?.available ?? null,
+          frozen: userAfterUpdate?.balance?.frozen ?? null
+        }
       });
 
       await sendSocketEvent(userId, 'trade:history:updated', {
@@ -1183,21 +1199,21 @@ async function processSettlement(settlementData) {
             message: `Đã xử lý ${trades.length} trades cho session ${sessionId}`
           });
           
-          // Send single balance update for all trades
-          const totalProfit = trades.reduce((sum, trade) => sum + trade.profit, 0);
-          const totalAmount = trades.reduce((sum, trade) => sum + trade.amount, 0);
-          const firstTradeId = trades.length > 0 ? trades[0].tradeId : null;
-          
+          // ✅ Gửi balance:updated với snapshot số dư mới nhất từ DB sau khi xử lý batch
+          const userDoc = await mongoose.connection.db.collection('users').findOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            { projection: { balance: 1 } }
+          );
+
           await sendSocketEvent(userId, 'balance:updated', {
-            userId, // ✅ Thêm userId
-            tradeId: firstTradeId, // ✅ Thêm tradeId của trade đầu tiên
+            userId,
             sessionId,
-            totalProfit: totalProfit,
-            totalAmount: totalAmount, // ✅ Thêm totalAmount
             tradeCount: trades.length,
-            profit: totalProfit, // ✅ Thêm profit
-            amount: totalAmount, // ✅ Thêm amount
-            message: `Balance đã được cập nhật: ${totalProfit >= 0 ? '+' : ''}${totalProfit} VND`
+            message: `Balance đã được cập nhật sau settlement (${trades.length} trades)`,
+            balance: {
+              available: userDoc?.balance?.available ?? null,
+              frozen: userDoc?.balance?.frozen ?? null
+            }
           });
           
           // ✅ FIX: Gửi trade:history:updated cho từng trade
