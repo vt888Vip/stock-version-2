@@ -216,6 +216,29 @@ async function releaseLock(key) {
 async function processSettlement(settlementData) {
   const { sessionId } = settlementData;
   
+  // ✅ KIỂM TRA IDEMPOTENCY TRƯỚC KHI ACQUIRE LOCK
+  const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
+    { sessionId },
+    { result: 1, status: 1, processingComplete: 1 }
+  );
+
+  if (!sessionDoc || !sessionDoc.result) {
+    console.log(`❌ [SETTLEMENT] Session ${sessionId} không tồn tại hoặc chưa có kết quả`);
+    return { success: false, error: 'Session not found or no result available' };
+  }
+
+  // ✅ KIỂM TRA IDEMPOTENCY TRƯỚC
+  if (sessionDoc.processingComplete === true) {
+    console.log(`⏭️ [SETTLEMENT] Session ${sessionId} đã được xử lý settlement, bỏ qua...`);
+    return { 
+      success: true, 
+      sessionId, 
+      result: sessionDoc.result, 
+      skipped: true,
+      message: 'Session already processed' 
+    };
+  }
+
   // Redis lock cho settlement để tránh race condition
   const settlementLockKey = `settlement:${sessionId}`;
   const lockAcquired = await acquireLock(settlementLockKey, 120000); // 2 phút timeout
@@ -241,48 +264,7 @@ async function processSettlement(settlementData) {
         throw new Error('Session not found or no result available');
       }
       
-      // 2. Kiểm tra settlement đã được xử lý chưa (Idempotency check)
-      if (sessionDoc.processingComplete === true) {
-        console.log(`⏭️ [SETTLEMENT] Session ${sessionId} đã được xử lý settlement, gửi socket events...`);
-        
-        // Lấy thống kê từ session đã xử lý
-        const completedSession = await mongoose.connection.db.collection('trading_sessions').findOne(
-          { sessionId },
-          { 
-            totalTrades: 1, 
-            totalWins: 1, 
-            totalLosses: 1, 
-            totalWinAmount: 1, 
-            totalLossAmount: 1 
-          }
-        );
-        
-        console.log(`📊 [SETTLEMENT] Thống kê từ database:`, {
-          totalTrades: completedSession?.totalTrades || 0,
-          totalWins: completedSession?.totalWins || 0,
-          totalLosses: completedSession?.totalLosses || 0
-        });
-        
-        // Lưu thông tin để gửi socket events sau khi transaction commit
-        const socketEventsData = {
-          sessionId,
-          result: sessionDoc.result,
-          completedSession,
-          needsSocketEvents: true
-        };
-        
-        return {
-          success: true,
-          sessionId,
-          result: sessionDoc.result,
-          totalTrades: completedSession?.totalTrades || 0,
-          totalWins: completedSession?.totalWins || 0,
-          totalLosses: completedSession?.totalLosses || 0,
-          skipped: true,
-          needsSocketEvents: true,
-          completedSession
-        };
-      }
+      // 2. Xử lý settlement (idempotency đã được kiểm tra ở trên)
       
       const sessionResult = sessionDoc.result;
       console.log(`📊 [SETTLEMENT] Sử dụng kết quả: ${sessionResult} cho session ${sessionId}`);
@@ -294,6 +276,51 @@ async function processSettlement(settlementData) {
       }).toArray();
 
       console.log(`📊 [SETTLEMENT] Tìm thấy ${pendingTrades.length} trades cần xử lý`);
+      
+      // ✅ Nếu không có trades, vẫn cập nhật session status
+      if (pendingTrades.length === 0) {
+        console.log(`📊 [SETTLEMENT] Không có trades để xử lý, chỉ cập nhật session status`);
+        
+        await mongoose.connection.db.collection('trading_sessions').updateOne(
+          { sessionId },
+          {
+            $set: {
+              status: 'COMPLETED',
+              actualResult: sessionResult,
+              processingComplete: false, // Chưa đánh dấu
+              totalTrades: 0,
+              totalWins: 0,
+              totalLosses: 0,
+              totalWinAmount: 0,
+              totalLossAmount: 0,
+              processingCompletedAt: new Date(),
+              updatedAt: new Date()
+            }
+          },
+          { session }
+        );
+        
+        return {
+          success: true,
+          sessionId,
+          result: sessionResult,
+          totalTrades: 0,
+          totalWins: 0,
+          totalLosses: 0,
+          totalWinAmount: 0,
+          totalLossAmount: 0,
+          needsSocketEvents: true,
+          userTrades: [],
+          completedSession: {
+            totalTrades: 0,
+            totalWins: 0,
+            totalLosses: 0,
+            totalWinAmount: 0,
+            totalLossAmount: 0,
+            result: sessionResult
+          }
+        };
+      }
       
       // Debug: Log tất cả trades trong session
       const allTrades = await mongoose.connection.db.collection('trades').find({ 
