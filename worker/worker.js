@@ -767,58 +767,6 @@ async function processCheckResult(tradeData) {
   }
 }
 
-// ✅ DELETED: processTrade() function - Trùng lặp với processCheckResult()
-// Chỉ sử dụng processCheckResult() để xử lý trades real-time
-
-
-
-
-      
-
-
-
-
-
-
-
-
-
-
-      
-    });
-
-    return result;
-  } catch (error) {
-    console.error(`❌ [TRADE] Lỗi xử lý trade ${tradeData.tradeId}:`, error.message);
-    
-    // Cập nhật trade status thành failed
-    try {
-      await mongoose.connection.db.collection('trades').updateOne(
-        { tradeId: tradeData.tradeId },
-        {
-          $set: {
-            status: 'failed',
-            errorMessage: error.message,
-            updatedAt: new Date()
-          }
-        }
-      );
-    } catch (updateError) {
-      console.error('❌ Không thể cập nhật trade status:', updateError);
-    }
-    
-    return {
-      success: false,
-      error: error.message
-    };
-  } finally {
-    await session.endSession();
-  }
-}
-
-/**
- * Xử lý settlement (kết quả)
- */
 async function processSettlement(settlementData) {
   const { sessionId } = settlementData;
   
