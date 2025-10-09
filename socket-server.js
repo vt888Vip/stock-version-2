@@ -238,6 +238,21 @@ io.on('connection', (socket) => {
     }
   })();
 
+  // Allow client to request a snapshot explicitly after connect
+  socket.on('balance:request', async () => {
+    if (!socket.userId || socket.userId === 'test-user') return;
+    const balance = await getUserBalance(socket.userId);
+    if (balance) {
+      io.to(userRoom).emit('balance:updated', {
+        userId: socket.userId,
+        snapshot: true,
+        balance,
+        message: 'Balance snapshot (on demand)',
+        timestamp: new Date().toISOString()
+      });
+    }
+  });
+
   // Handle disconnect
   socket.on('disconnect', () => {
     socket.leave(userRoom);
