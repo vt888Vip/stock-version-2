@@ -47,10 +47,12 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       ? 'http://localhost:3001' 
       : window.location.origin; // sử dụng domain (443)
     
+    const authPayloadToken = token || (user?.id ? `user_${user.id}_${Date.now()}` : 'test-token');
+
     const newSocket = io(socketUrl, {
       path: '/socket.io',
       auth: {
-        token: token || 'test-token'
+        token: authPayloadToken
       },
       transports: ['websocket', 'polling'], // ✅ Fallback cho VPS
       timeout: 8000, // ✅ Tăng timeout cho VPS
@@ -76,6 +78,17 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       // ✅ Thêm heartbeat
       heartbeatInterval: 5000,
       heartbeatTimeout: 10000
+    });
+    // ✅ Lắng nghe batch kết quả giao dịch
+    newSocket.on('trades:batch:completed', (data) => {
+      const evt = new CustomEvent('trades:batch:completed', { detail: data });
+      window.dispatchEvent(evt);
+    });
+
+    // ✅ Lắng nghe settlement hoàn tất (broadcast)
+    newSocket.on('session:settlement:completed', (data) => {
+      const evt = new CustomEvent('session:settlement:completed', { detail: data });
+      window.dispatchEvent(evt);
     });
 
     newSocket.on('connect', () => {

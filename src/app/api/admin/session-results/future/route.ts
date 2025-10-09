@@ -16,26 +16,22 @@ export async function GET(request: NextRequest) {
 
       const now = new Date();
 
-      // Get 31 most recent sessions including current and future
+      // Chỉ lấy 31 phiên bao gồm phiên hiện tại và các phiên tương lai
+      // (KHÔNG bao gồm phiên đã hoàn thành để UI luôn thấy phiên sắp diễn ra)
       const sessions = await db.collection('trading_sessions')
         .find({
           $or: [
-            // Future sessions (startTime > now, PENDING)
+            // Future sessions (startTime > now)
             { startTime: { $gt: now }, status: 'PENDING' },
-            // Current session (startTime <= now <= endTime, any active status)
-            { 
-              startTime: { $lte: now }, 
+            // Current session (startTime <= now <= endTime)
+            {
+              startTime: { $lte: now },
               endTime: { $gte: now },
               status: { $in: ['ACTIVE', 'TRADING', 'SETTLING'] }
-            },
-            // Recent completed sessions (within last 2 hours) for context
-            {
-              endTime: { $gte: new Date(now.getTime() - 2 * 60 * 60 * 1000) }, // Last 2 hours
-              status: 'COMPLETED'
             }
           ]
         })
-        .sort({ startTime: 1 }) // Sort by start time ascending (oldest first)
+        .sort({ startTime: 1 })
         .limit(limit)
         .toArray();
 

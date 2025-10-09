@@ -448,7 +448,9 @@ export default function TradePage() {
         // console.log('📊 [TRADE RESULTS] Batch updated:', newResults);
         return newResults;
       });
-      
+       // ✅ Refetch ngay để đồng bộ số dư và lịch sử sau batch
+      try { fetchBalanceFromServer(); } catch {}
+      try { fetchTradeHistoryFromServer?.(); } catch {}
     };
 
     // Add event listeners
@@ -467,6 +469,17 @@ export default function TradePage() {
       window.removeEventListener('trade:history:updated', handleTradeHistoryUpdated as EventListener);
     };
   }, [lastSequence]);
+
+  // ✅ Lắng nghe công bố kết quả để refetch tức thì
+  useEffect(() => {
+    const onSettlementCompleted = (e: CustomEvent) => {
+      try { fetchBalanceFromServer(); } catch {}
+      try { fetchTradeHistoryFromServer?.(); } catch {}
+      try { fetchSessionInfoFromServer?.(); } catch {}
+    };
+    window.addEventListener('session:settlement:completed', onSettlementCompleted as EventListener);
+    return () => window.removeEventListener('session:settlement:completed', onSettlementCompleted as EventListener);
+  }, []);
 
   // ✅ FIX: Reconnection handling - fetch balance khi socket reconnect (với delay)
   useEffect(() => {
