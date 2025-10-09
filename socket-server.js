@@ -191,6 +191,9 @@ io.on('connection', (socket) => {
   const userRoom = `user_${socket.userId}`;
   socket.join(userRoom);
   
+  // ✅ Debug: Log user join room
+  console.log(`🔌 [SOCKET] User ${socket.userId} joined room ${userRoom}`);
+  
   // Send connection confirmation
   socket.emit('connected', {
     userId: socket.userId,
@@ -294,6 +297,9 @@ const sendToUser = (userId, event, data) => {
     // ✅ Debug: Log gửi event
     if (event === 'balance:updated') {
       console.log(`💰 [SOCKET] Emit balance:updated đến room ${userRoom} (${roomSize} clients)`);
+      if (roomSize === 0) {
+        console.log(`⚠️ [SOCKET] CẢNH BÁO: Room ${userRoom} không có clients nào!`);
+      }
     }
 
     // Chỉ log những events quan trọng (bỏ timer updates)

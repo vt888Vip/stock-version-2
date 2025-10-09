@@ -767,206 +767,24 @@ async function processCheckResult(tradeData) {
   }
 }
 
-/**
- * Xử lý trade từ queue
- */
-async function processTrade(tradeData) {
-  const session = await mongoose.startSession();
-  
-  try {
-    console.log(`🔄 [TRADE] Bắt đầu xử lý trade: ${tradeData.tradeId}`);
-    
-    const result = await session.withTransaction(async () => {
-      const { tradeId, userId, sessionId, amount, type } = tradeData;
+// ✅ DELETED: processTrade() function - Trùng lặp với processCheckResult()
+// Chỉ sử dụng processCheckResult() để xử lý trades real-time
 
-      // 1. Kiểm tra trade có tồn tại không
-      const trade = await mongoose.connection.db.collection('trades').findOne({ tradeId });
-      if (!trade) {
-        throw new Error(`Trade not found: ${tradeId}`);
-      }
 
-      // 2. Kiểm tra trade đã được xử lý chưa
-      if (trade.status === 'completed' || trade.status === 'failed') {
-        console.log(`✅ [TRADE] Trade đã được xử lý: ${tradeId} với status: ${trade.status}`);
-        return { success: true, message: 'Trade already processed' };
-      }
 
-      // 3. Cập nhật status thành processing
-      await mongoose.connection.db.collection('trades').updateOne(
-        { tradeId },
-        { $set: { status: 'processing' } }
-      );
 
-      // 4. Lấy kết quả session từ database
-      const sessionDoc = await mongoose.connection.db.collection('trading_sessions').findOne(
-        { sessionId },
-        { result: 1 }
-      );
       
-      if (!sessionDoc || !sessionDoc.result) {
-        throw new Error(`Session result not available: ${sessionId}`);
-      }
+
+
+
+
+
+
+
+
+
+
       
-      const sessionResult = sessionDoc.result;
-      console.log(`📊 [TRADE] Sử dụng kết quả session: ${sessionResult} cho session ${sessionId}`);
-
-      // 5. So sánh trade với kết quả session
-      const userPrediction = type === 'buy' ? 'UP' : 'DOWN';
-      const isWin = userPrediction === sessionResult;
-      
-      console.log(`🎯 [TRADE] So sánh kết quả:`, {
-        tradeId,
-        userPrediction,
-        sessionResult,
-        isWin,
-        amount
-      });
-
-      // 6. Tính toán profit/loss
-      const profit = isWin ? Math.floor(amount * 0.9) : -amount; // Tỷ lệ 10 ăn 9
-
-      // 7. Cập nhật balance user
-      if (isWin) {
-        // THẮNG: Trả lại tiền gốc + tiền thắng
-        await mongoose.connection.db.collection('users').updateOne(
-          { _id: new mongoose.Types.ObjectId(userId) },
-          {
-            $inc: {
-              'balance.frozen': -amount,
-              'balance.available': amount + profit
-            },
-            $set: {
-              isLocked: false,
-              lockExpiry: null,
-              updatedAt: new Date()
-            }
-          }
-        );
-      } else {
-        // THUA: Chỉ trừ frozen (mất tiền)
-        await mongoose.connection.db.collection('users').updateOne(
-          { _id: new mongoose.Types.ObjectId(userId) },
-          {
-            $inc: {
-              'balance.frozen': -amount
-            },
-            $set: {
-              isLocked: false,
-              lockExpiry: null,
-              updatedAt: new Date()
-            }
-          }
-        );
-      }
-
-      // ✅ Lấy lại số dư mới nhất sau khi cập nhật để gửi qua socket
-      const userAfterUpdate = await mongoose.connection.db.collection('users').findOne(
-        { _id: new mongoose.Types.ObjectId(userId) },
-        { projection: { balance: 1 } }
-      );
-
-      // 8. Cập nhật trade với kết quả
-      await mongoose.connection.db.collection('trades').updateOne(
-        { tradeId },
-        {
-          $set: {
-            status: 'completed',
-            processedAt: new Date(),
-            profit: profit, // Lưu profit vào database
-            result: {
-              isWin,
-              profit: profit, // Lưu profit trong result object
-              sessionResult,
-              appliedToBalance: true,
-              processedAt: new Date()
-            }
-          }
-        }
-      );
-
-      // 9. Cập nhật thống kê session
-      await mongoose.connection.db.collection('trading_sessions').updateOne(
-        { sessionId },
-        {
-          $inc: {
-            totalTrades: 1,
-            totalWins: isWin ? 1 : 0,
-            totalLosses: isWin ? 0 : 1,
-            totalWinAmount: isWin ? amount : 0,
-            totalLossAmount: isWin ? 0 : amount
-          }
-        }
-      );
-
-      console.log(`✅ [TRADE] Xử lý trade thành công:`, {
-        tradeId,
-        isWin,
-        profit,
-        sessionResult
-      });
-
-      // Gửi Socket.IO events
-      await sendSocketEvent(userId, 'trade:completed', {
-        tradeId,
-        sessionId,
-        result: isWin ? 'win' : 'lose',
-        profit: profit,
-        amount: amount,
-        direction: type === 'buy' ? 'UP' : 'DOWN',
-        message: isWin ? '🎉 Thắng!' : '😔 Thua'
-      });
-
-      await sendSocketEvent(userId, 'balance:updated', {
-        tradeId,
-        profit: profit,
-        amount: amount, // ✅ THÊM: Số tiền đặt lệnh để frontend tính balance đúng
-        result: isWin ? 'win' : 'lose',
-        message: `Balance đã được cập nhật: ${isWin ? '+' : ''}${profit} VND`,
-        // ✅ Gửi kèm snapshot số dư mới nhất để frontend cập nhật trực tiếp
-        balance: {
-          available: userAfterUpdate?.balance?.available ?? null,
-          frozen: userAfterUpdate?.balance?.frozen ?? null
-        },
-        userId
-      });
-
-      // ✅ THÊM: Gửi balance:updated event chỉ đến admin khi settlement
-      await sendSocketEvent('admin', 'balance:updated', {
-        userId,
-        tradeId,
-        profit: profit,
-        amount: amount,
-        result: isWin ? 'win' : 'lose',
-        message: `User ${userId} ${isWin ? 'thắng' : 'thua'} ${Math.abs(profit).toLocaleString()} VND`,
-        balance: {
-          available: userAfterUpdate?.balance?.available ?? null,
-          frozen: userAfterUpdate?.balance?.frozen ?? null
-        }
-      });
-
-      await sendSocketEvent(userId, 'trade:history:updated', {
-        action: 'update',
-        trade: {
-          id: tradeId,
-          tradeId: tradeId, // Thêm tradeId để đảm bảo compatibility
-          sessionId,
-          direction: type === 'buy' ? 'UP' : 'DOWN',
-          amount,
-          status: 'completed',
-          result: isWin ? 'win' : 'lose',
-          profit: profit,
-          createdAt: new Date().toISOString() // Sửa từ processedAt thành createdAt
-        },
-        message: 'Lịch sử giao dịch đã được cập nhật'
-      });
-      
-      return {
-        success: true,
-        tradeId,
-        isWin,
-        profit,
-        sessionResult
-      };
     });
 
     return result;
@@ -1050,104 +868,45 @@ async function processSettlement(settlementData) {
         throw new Error('Session not found or already completed');
       }
 
-      // 2. Lấy tất cả trades pending trong session (sử dụng cùng collection với API)
-      const pendingTrades = await mongoose.connection.db.collection('trades').find({ 
+      // 2. Lấy tất cả trades completed trong session chưa được gửi events
+      const completedTrades = await mongoose.connection.db.collection('trades').find({ 
         sessionId, 
-        status: 'pending' 
+        status: 'completed',
+        appliedToBalance: true,
+        eventsSent: { $ne: true } // Chưa gửi events
       }).toArray();
 
-      console.log(`📊 [SETTLEMENT] Tìm thấy ${pendingTrades.length} trades cần xử lý`);
+      console.log(`📊 [SETTLEMENT] Tìm thấy ${completedTrades.length} trades cần gửi events`);
 
       let totalWins = 0;
       let totalLosses = 0;
       let totalWinAmount = 0;
       let totalLossAmount = 0;
 
-             // 3. Xử lý từng trade
-       for (const trade of pendingTrades) {
-         // ✅ SỬA: Sử dụng logic thống nhất như processTrade
-         const userPrediction = trade.type === 'buy' ? 'UP' : 'DOWN';
-         const isWin = userPrediction === sessionResult;
-         // ✅ SỬA: Logic profit thống nhất
-         const profit = isWin ? Math.floor(trade.amount * 0.9) : -trade.amount;
+             // 3. Gửi events cho từng trade đã completed
+       for (const trade of completedTrades) {
+         // ✅ Chỉ gửi events, không xử lý trades (đã được xử lý real-time)
+         const isWin = trade.result === 'win';
+         const profit = trade.profit || 0;
 
-        // Cập nhật trade (sử dụng cùng collection với API)
-        await mongoose.connection.db.collection('trades').updateOne(
-          { _id: trade._id },
-          {
-            $set: {
-              status: 'completed',
-              result: isWin ? 'win' : 'lose',
-              profit: profit,
-              appliedToBalance: true,
-              updatedAt: new Date()
-            }
-          },
-          { session }
-        );
-
-                 // ✅ FIX: Cập nhật balance với Redis lock cho từng user
-         const userLockKey = `user:${trade.userId}:balance`;
-         const userLockAcquired = await acquireLock(userLockKey, 10000); // 10s timeout
-         
-         if (!userLockAcquired) {
-           console.log(`❌ [SETTLEMENT] Không thể acquire lock cho user ${trade.userId}`);
-           continue; // Skip user này, xử lý user khác
-         }
-         
-         try {
-           if (isWin) {
-             // THẮNG: Trả lại tiền gốc + tiền thắng
-             await mongoose.connection.db.collection('users').updateOne(
-               { _id: trade.userId },
-               {
-                 $inc: {
-                   'balance.frozen': -trade.amount,
-                   'balance.available': trade.amount + profit
-                 },
-                 $set: {
-                   updatedAt: new Date()
-                 }
-               },
-               { session }
-             );
-           } else {
-             // THUA: Chỉ trừ frozen (mất tiền)
-             await mongoose.connection.db.collection('users').updateOne(
-               { _id: trade.userId },
-               {
-                 $inc: {
-                   'balance.frozen': -trade.amount
-                 },
-                 $set: {
-                   updatedAt: new Date()
-                 }
-               },
-               { session }
-             );
-           }
-         } finally {
-           await releaseLock(userLockKey);
+         // Cập nhật thống kê
+         if (isWin) {
+           totalWins++;
+           totalWinAmount += trade.amount;
+         } else {
+           totalLosses++;
+           totalLossAmount += trade.amount;
          }
 
-        // Cập nhật thống kê
-        if (isWin) {
-          totalWins++;
-          totalWinAmount += trade.amount;
-        } else {
-          totalLosses++;
-          totalLossAmount += trade.amount;
-        }
-
-        console.log(`✅ [SETTLEMENT] Xử lý trade ${trade._id}: ${isWin ? 'WIN' : 'LOSE'} ${trade.amount}`);
+         console.log(`✅ [SETTLEMENT] Gửi events cho trade ${trade._id}: ${isWin ? 'WIN' : 'LOSE'} ${trade.amount}`);
       }
 
-      // 4. Cập nhật session statistics và đánh dấu hoàn thành (sử dụng cùng collection với API)
+      // 4. Cập nhật session statistics và đánh dấu hoàn thành
       await mongoose.connection.db.collection('trading_sessions').updateOne(
         { sessionId },
         {
           $set: {
-            totalTrades: pendingTrades.length,
+            totalTrades: completedTrades.length,
             totalWins: totalWins,
             totalLosses: totalLosses,
             totalWinAmount: totalWinAmount,
@@ -1159,18 +918,14 @@ async function processSettlement(settlementData) {
         }
       );
 
-              console.log(`✅ [SETTLEMENT] Xử lý settlement thành công: ${settlementData.id}`);
-        console.log(`📊 [SETTLEMENT] Thống kê: ${pendingTrades.length} trades, ${totalWins} wins, ${totalLosses} losses`);
+      console.log(`✅ [SETTLEMENT] Xử lý settlement thành công: ${settlementData.id}`);
+      console.log(`📊 [SETTLEMENT] Thống kê: ${completedTrades.length} trades, ${totalWins} wins, ${totalLosses} losses`);
 
-        // ✅ SỬA: Gửi batch events thay vì individual events
+        // ✅ Gửi events cho trades đã completed
         const userTrades = new Map();
         
         // Group trades by user
-        for (const trade of pendingTrades) {
-          const userPrediction = trade.type === 'buy' ? 'UP' : 'DOWN';
-          const isWin = userPrediction === sessionResult;
-          const profit = isWin ? Math.floor(trade.amount * 0.9) : -trade.amount;
-          
+        for (const trade of completedTrades) {
           const userId = trade.userId.toString();
           if (!userTrades.has(userId)) {
             userTrades.set(userId, []);
@@ -1179,12 +934,12 @@ async function processSettlement(settlementData) {
           userTrades.get(userId).push({
             tradeId: trade.tradeId || trade._id.toString(),
             sessionId,
-            result: isWin ? 'win' : 'lose',
-            profit: profit,
+            result: trade.result,
+            profit: trade.profit,
             amount: trade.amount,
-            direction: userPrediction, // ✅ SỬA: Sử dụng logic thống nhất
+            direction: trade.direction,
             status: 'completed',
-            createdAt: new Date().toISOString()
+            createdAt: trade.createdAt
           });
         }
         
@@ -1235,12 +990,24 @@ async function processSettlement(settlementData) {
           }
         }
 
+        // ✅ Đánh dấu trades đã gửi events
+        if (completedTrades.length > 0) {
+          await mongoose.connection.db.collection('trades').updateMany(
+            { 
+              _id: { $in: completedTrades.map(t => t._id) }
+            },
+            { 
+              $set: { eventsSent: true }
+            }
+          );
+        }
+
         // ✅ ALWAYS: Broadcast settlement completed to all users (kể cả khi 0 trades)
         await sendSocketEvent('all', 'session:settlement:completed', {
           sessionId,
           result: sessionResult,
           totals: {
-            totalTrades: pendingTrades.length,
+            totalTrades: completedTrades.length,
             totalWins,
             totalLosses,
             totalWinAmount,
