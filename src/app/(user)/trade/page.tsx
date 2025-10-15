@@ -47,33 +47,9 @@ const formatAmount = (value: string): string => {
   return isNaN(num) ? '' : num.toLocaleString('vi-VN');
 };
 
-// Hàm sync balance đơn giản - chỉ dùng khi cần thiết
-async function syncBalance(
-  setBalance: React.Dispatch<React.SetStateAction<number>>, 
-  setIsSyncing: React.Dispatch<React.SetStateAction<boolean>>, 
-  setLastBalanceSync?: React.Dispatch<React.SetStateAction<number>>
-) {
-  setIsSyncing(true);
-  try {
-    const res = await fetch('/api/user/balance/sync', {
-      headers: {
-        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-      }
-    });
-    const data = await res.json();
-    
-    if (data.success) {
-      const newBalance = data.balance.available;
-      setBalance(newBalance);
-      if (setLastBalanceSync) {
-        setLastBalanceSync(Date.now());
-      }
-    }
-  } catch (error) {
-    console.error('❌ [BALANCE] Error syncing balance:', error);
-  }
-  setIsSyncing(false);
-}
+// ✅ SOCKET-ONLY: Không cần syncBalance function nữa
+// Balance sẽ được cập nhật từ socket events
+console.log('💰 [SOCKET-ONLY] Không cần syncBalance, chỉ dùng socket events');
 
 export default function TradePage() {
   const { user, isLoading: authLoading } = useAuth();
@@ -87,6 +63,10 @@ export default function TradePage() {
   const [balance, setBalance] = useState<number>(0);
   const [frozenBalance, setFrozenBalance] = useState<number>(0);
   const [tradeHistory, setTradeHistory] = useState<TradeHistoryRecord[]>([]);
+  
+  // ✅ Thêm state để track balance stability
+  const [balanceLoaded, setBalanceLoaded] = useState(false);
+  const [lastBalanceUpdate, setLastBalanceUpdate] = useState<number>(0);
 
   // Utility function để deduplicate trade history
   const deduplicateTradeHistory = (trades: TradeHistoryRecord[]): TradeHistoryRecord[] => {
@@ -153,36 +133,33 @@ export default function TradePage() {
   // ✅ FIX: State để track sequence number cho socket events
   const [lastSequence, setLastSequence] = useState(0);
 
-  // ✅ FIX: Fetch balance từ server với lock để tránh race condition
-  const [isBalanceFetching, setIsBalanceFetching] = useState(false);
+  // ✅ SOCKET-ONLY: Không cần isBalanceFetching nữa
+  // Không có API calls nên không cần lock
   
-  const fetchBalanceFromServer = async () => {
-    // ✅ FIX: Tránh multiple concurrent fetches
-    if (isBalanceFetching) {
-      // console.log('⏳ [BALANCE] Already fetching balance, skipping...');
-      return;
+  // ✅ Balance validation function
+  const validateBalanceUpdate = (newBalance: number, newFrozen: number) => {
+    const now = Date.now();
+    
+    // Chỉ cập nhật nếu:
+    // 1. Balance > 0 hoặc đã có balance trước đó
+    // 2. Không phải reset về 0 không hợp lý
+    // 3. Có ít nhất 1 giây giữa các updates
+    if (newBalance < 0) {
+      console.warn('⚠️ [BALANCE] Invalid balance:', newBalance);
+      return false;
     }
     
-    setIsBalanceFetching(true);
-    try {
-      const res = await fetch('/api/user/balance', {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        }
-      });
-      const data = await res.json();
-      
-      if (data.success) {
-        setBalance(data.balance.available);
-        setFrozenBalance(data.balance.frozen);
-        // console.log('💰 [BALANCE] Updated from server:', data.balance.available);
-      }
-    } catch (error) {
-      console.error('❌ [BALANCE SYNC] Error fetching balance:', error);
-    } finally {
-      setIsBalanceFetching(false);
+    if (newBalance === 0 && balance > 0 && (now - lastBalanceUpdate) < 5000) {
+      console.warn('⚠️ [BALANCE] Suspicious balance reset to 0, keeping current balance');
+      return false;
     }
+    
+    return true;
   };
+
+  // ✅ SOCKET-ONLY: Không cần fetchBalanceFromServer nữa
+  // Balance sẽ được cập nhật từ socket events
+  console.log('💰 [SOCKET-ONLY] Không cần fetchBalanceFromServer, chỉ dùng socket events');
 
   // Không dùng debounce refetch nữa – cập nhật trực tiếp từ payload worker
   const [balanceUpdateTimeout, setBalanceUpdateTimeout] = useState<NodeJS.Timeout | null>(null);
@@ -212,11 +189,19 @@ export default function TradePage() {
         setLastSequence(sequence);
       }
       
-      // Cập nhật trực tiếp balance từ payload worker (không refetch)
+      // ✅ Cập nhật balance với validation
       if (event.detail.balance) {
         const { available, frozen } = event.detail.balance;
-        if (typeof available === 'number') setBalance(available);
-        if (typeof frozen === 'number') setFrozenBalance(frozen);
+        
+        if (typeof available === 'number' && validateBalanceUpdate(available, frozen || 0)) {
+          setBalance(available);
+          setLastBalanceUpdate(Date.now());
+          console.log('💰 [SOCKET] Balance updated from socket:', available);
+        }
+        
+        if (typeof frozen === 'number') {
+          setFrozenBalance(frozen);
+        }
       }
 
       // Chỉ cập nhật trade results, KHÔNG tự tính balance
@@ -326,10 +311,12 @@ export default function TradePage() {
     };
 
     const handleTradeHistoryUpdated = (event: CustomEvent) => {
+      console.log('📝 [SOCKET-ONLY] Trade history updated event received:', event.detail);
+      
       const { action, trade } = event.detail;
       
       if (action === 'add') {
-        // Thêm trade mới vào trade history
+        // ✅ SOCKET-ONLY: Thêm trade mới vào trade history
         const newTradeRecord: TradeHistoryRecord = {
           id: trade.id,
           sessionId: trade.sessionId,
@@ -342,7 +329,6 @@ export default function TradePage() {
         };
         
         setTradeHistory(prev => {
-          // Kiểm tra xem trade đã tồn tại chưa
           const existingIndex = prev.findIndex(t => t.id === newTradeRecord.id);
           if (existingIndex >= 0) {
             // Cập nhật trade hiện có
@@ -354,36 +340,30 @@ export default function TradePage() {
             return [newTradeRecord, ...prev];
           }
         });
-        setTradesInCurrentSession(prev => prev + 1);
+        
+        // Cập nhật số trades trong session hiện tại
+        if (trade.sessionId === currentSessionId && trade.status === 'pending') {
+          setTradesInCurrentSession(prev => prev + 1);
+        }
         
       } else if (action === 'update') {
-        // Cập nhật trade hiện có trong trade history
+        // ✅ SOCKET-ONLY: Cập nhật trade hiện có
         setTradeHistory(prev => {
-          // Tìm trade với tradeId (format từ database)
           const existingIndex = prev.findIndex(t => 
             t.id === trade.id || 
-            t.id === trade.tradeId ||
-            t.id === trade.id
+            t.id === trade.tradeId
           );
-          
-          // console.log('🔍 Found trade at index:', existingIndex);
           
           if (existingIndex >= 0) {
             const updated = [...prev];
             updated[existingIndex] = {
-              id: trade.id,
-              sessionId: trade.sessionId,
-              direction: trade.direction,
-              amount: trade.amount,
-              status: trade.status,
+              ...updated[existingIndex],
               result: trade.result,
               profit: trade.profit,
-              createdAt: validateAndFormatDate(trade.createdAt),
+              status: trade.status
             };
-            // console.log('✅ Updated trade in history:', updated[existingIndex]);
             return updated;
           } else {
-            // console.log('❌ Trade not found in history, adding as new');
             // Nếu không tìm thấy, thêm như trade mới
             const newTradeRecord: TradeHistoryRecord = {
               id: trade.id,
@@ -408,38 +388,30 @@ export default function TradePage() {
     };
 
     const handleBatchTradesCompleted = (event: CustomEvent) => {
-      // console.log('🎉 Batch trades completed event received:', event.detail);
+      console.log('🎉 [SOCKET-ONLY] Batch trades completed event received:', event.detail);
       
       const { trades, sessionId, totalTrades, totalWins, totalLosses } = event.detail;
       
-      // Cập nhật trade results cho tất cả trades
-      setTradeResults(prev => {
-        const newResults = [...prev];
+      // ✅ SOCKET-ONLY: Cập nhật tradeHistory với dữ liệu từ settlement
+      setTradeHistory(prev => {
+        const updated = [...prev];
         
         trades.forEach((trade: any) => {
-          const existingIndex = newResults.findIndex(r => r.tradeId === trade.tradeId);
+          const existingIndex = updated.findIndex(t => t.id === trade.tradeId);
           if (existingIndex >= 0) {
-            // Update existing
-            newResults[existingIndex] = {
-              tradeId: trade.tradeId,
-              status: trade.result,
+            // Cập nhật trade hiện có với kết quả từ settlement
+            updated[existingIndex] = {
+              ...updated[existingIndex],
+              result: trade.result,
               profit: trade.profit,
-              amount: trade.amount
+              status: 'completed'
             };
-          } else {
-            // Add new
-            newResults.push({
-              tradeId: trade.tradeId,
-              status: trade.result,
-              profit: trade.profit,
-              amount: trade.amount
-            });
+            console.log('📊 [SOCKET-ONLY] Updated trade from settlement:', trade.tradeId, 'result:', trade.result);
           }
         });
         
-      // console.log('📊 [TRADE RESULTS] Batch updated:', newResults);
-      return newResults;
-    });
+        return updated;
+      });
       // Không refetch sau batch; số dư sẽ được cập nhật qua balance:updated
     };
 
@@ -501,40 +473,14 @@ export default function TradePage() {
           }
         }
 
-        // Lấy lịch sử giao dịch từ database
-        const tradeHistoryResponse = await fetch('/api/trades/history', {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        });
-
-        if (tradeHistoryResponse.ok) {
-          const tradeHistoryData = await tradeHistoryResponse.json();
-          // console.log('📊 [HISTORY] Response data:', tradeHistoryData);
-          
-          if (tradeHistoryData.trades && tradeHistoryData.trades.length > 0) {
-            // Chuyển đổi dữ liệu từ database sang format của component
-            const formattedTrades: TradeHistoryRecord[] = tradeHistoryData.trades.map((trade: any) => ({
-              id: trade.id || trade._id || trade._id?.toString() || 'unknown',
-              sessionId: trade.sessionId,
-              direction: trade.direction || 'UP',
-              amount: trade.amount || 0,
-              status: trade.status || 'pending',
-              result: trade.result || null,
-              profit: trade.profit || 0,
-              createdAt: validateAndFormatDate(trade.createdAt || new Date().toISOString()),
-            }));
-
-            setTradeHistory(deduplicateTradeHistory(formattedTrades));
-            
-            // Đếm số lệnh pending trong phiên hiện tại
-            const currentSessionTrades = formattedTrades.filter(trade => 
-              trade.sessionId === currentSessionId && 
-              trade.status === 'pending'
-            );
-            setTradesInCurrentSession(currentSessionTrades.length);
-          }
-        }
+        // ✅ SOCKET-ONLY: Không gọi API nữa, chỉ dùng socket events
+        console.log('📊 [SOCKET-ONLY] Không gọi API, chỉ dùng socket events');
+        
+        // ✅ Khởi tạo empty state, sẽ được populate từ socket events
+        setTradeHistory([]);
+        setTradesInCurrentSession(0);
+        setBalance(0);
+        setFrozenBalance(0);
 
         setIsLoading(false);
       } catch (error) {
@@ -548,8 +494,16 @@ export default function TradePage() {
     }
   }, [authLoading, user, router, toast]);
 
-  // Không fetch balance ban đầu – nhận snapshot từ socket balance:updated (snapshot: true)
-  useEffect(() => { return () => {}; }, [authLoading, user]);
+  // ✅ SOCKET-ONLY: Không gọi API trade history nữa, chỉ dùng socket events
+  // Trade history sẽ được cập nhật từ socket events:
+  // - trade:placed (khi đặt lệnh)
+  // - trades:batch:completed (khi settlement)
+  // - trade:history:updated (cập nhật individual)
+  console.log('📊 [SOCKET-ONLY] Trade history chỉ được cập nhật từ socket events');
+
+  // ✅ SOCKET-ONLY: Không gọi API balance nữa, chỉ dùng socket events
+  // Balance sẽ được cập nhật từ socket events: balance:updated
+  console.log('💰 [SOCKET-ONLY] Balance chỉ được cập nhật từ socket events');
 
   // ✅ COMMENTED: Tạm dừng timer polling để test Scheduler timer
   // useEffect(() => {
@@ -1193,25 +1147,13 @@ export default function TradePage() {
                           <div>Syncing: {isSyncingBalance ? 'Yes' : 'No'}</div>
                           <div className="mt-1 pt-1 border-t border-blue-300">
                             <button 
-                              onClick={async () => {
-                                try {
-                                  const response = await fetch('/api/test-balance', {
-                                    headers: {
-                                      'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                                    }
-                                  });
-                                  const data = await response.json();
-                                  if (data.success) {
-                                    // console.log('🔍 [DEBUG] Balance Test Result:', data.data);
-                                    alert(`Current: ${data.data.currentBalance.available} | Calculated: ${data.data.calculatedBalance.available}`);
-                                  }
-                                } catch (error) {
-                                  // console.error('Debug balance error:', error);
-                                }
+                              onClick={() => {
+                                console.log('💰 [SOCKET-ONLY] Balance chỉ được cập nhật từ socket events');
+                                alert('Socket-Only Mode: Balance chỉ được cập nhật từ socket events');
                               }}
-                              className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                              className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
                             >
-                              Test Balance
+                              Socket-Only Mode
                             </button>
                           </div>
                         </div>
@@ -1414,25 +1356,13 @@ export default function TradePage() {
                         <div>Syncing: {isSyncingBalance ? 'Yes' : 'No'}</div>
                         <div className="mt-1 pt-1 border-t border-blue-300">
                           <button 
-                            onClick={async () => {
-                              try {
-                                const response = await fetch('/api/test-balance', {
-                                  headers: {
-                                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-                                  }
-                                });
-                                const data = await response.json();
-                                if (data.success) {
-                                  // console.log('🔍 [DEBUG] Balance Test Result:', data.data);
-                                  alert(`Current: ${data.data.currentBalance.available} | Calculated: ${data.data.calculatedBalance.available}`);
-                                }
-                              } catch (error) {
-                                // console.error('Debug balance error:', error);
-                              }
+                            onClick={() => {
+                              console.log('💰 [SOCKET-ONLY] Balance chỉ được cập nhật từ socket events');
+                              alert('Socket-Only Mode: Balance chỉ được cập nhật từ socket events');
                             }}
-                            className="text-xs bg-blue-600 text-white px-2 py-1 rounded hover:bg-blue-700"
+                            className="text-xs bg-green-600 text-white px-2 py-1 rounded hover:bg-green-700"
                           >
-                            Test Balance
+                            Socket-Only Mode
                           </button>
                         </div>
                       </div>
