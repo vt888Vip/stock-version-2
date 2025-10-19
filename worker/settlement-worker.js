@@ -514,14 +514,20 @@ async function processSettlement(settlementData) {
           { projection: { balance: 1 } }
         );
 
+        console.log(`💰 [SETTLEMENT] Gửi balance update cho user ${userId}:`, {
+          available: userDoc?.balance?.available ?? 0,
+          frozen: userDoc?.balance?.frozen ?? 0,
+          tradeCount: trades.length
+        });
+        
         await sendSocketEvent(userId, 'balance:updated', {
           userId,
           sessionId,
           tradeCount: trades.length,
           message: `Balance đã được cập nhật sau settlement (${trades.length} trades)`,
           balance: {
-            available: userDoc?.balance?.available ?? null,
-            frozen: userDoc?.balance?.frozen ?? null
+            available: userDoc?.balance?.available ?? 0,
+            frozen: userDoc?.balance?.frozen ?? 0
           }
         });
         
@@ -691,14 +697,20 @@ async function sendSocketEventsAfterSettlement(result) {
         { projection: { balance: 1 } }
       );
       
+      console.log(`💰 [SETTLEMENT] Gửi balance update cho user ${userId}:`, {
+        available: userDoc?.balance?.available ?? 0,
+        frozen: userDoc?.balance?.frozen ?? 0,
+        tradeCount: userTrades.length
+      });
+      
       await sendSocketEvent(userId, 'balance:updated', {
         userId,
         sessionId,
         tradeCount: userTrades.length,
         message: `Balance đã được cập nhật sau settlement (${userTrades.length} trades)`,
         balance: {
-          available: userDoc?.balance?.available ?? null,
-          frozen: userDoc?.balance?.frozen ?? null
+          available: userDoc?.balance?.available ?? 0,
+          frozen: userDoc?.balance?.frozen ?? 0
         }
       });
       
