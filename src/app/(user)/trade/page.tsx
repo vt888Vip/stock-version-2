@@ -49,7 +49,6 @@ const formatAmount = (value: string): string => {
 
 // ✅ SOCKET-ONLY: Không cần syncBalance function nữa
 // Balance sẽ được cập nhật từ socket events
-console.log('💰 [SOCKET-ONLY] Không cần syncBalance, chỉ dùng socket events');
 
 export default function TradePage() {
   const { user, isLoading: authLoading } = useAuth();
@@ -168,13 +167,9 @@ export default function TradePage() {
     const handleBalanceUpdate = (event: CustomEvent) => {
       const { profit, result, amount, tradeId, sequence, userId } = event.detail;
       
-      console.log('💰 [TRADE PAGE] Balance update received:', event.detail);
-      console.log('💰 [TRADE PAGE] Balance data:', event.detail.balance);
-      console.log('💰 [TRADE PAGE] Current balance before update:', balance);
       
       // ✅ FIX: Chỉ xử lý events cho user hiện tại
       if (userId && userId !== user?.id) {
-        console.log('💰 [TRADE PAGE] Ignoring balance update for different user:', userId, 'vs', user?.id);
         return;
       }
       
@@ -198,15 +193,7 @@ export default function TradePage() {
         if (typeof available === 'number' && validateBalanceUpdate(available, frozen || 0)) {
           setBalance(available);
           setLastBalanceUpdate(Date.now());
-          console.log('💰 [SOCKET] Balance updated from socket (PRIORITY):', available);
-          console.log('💰 [SOCKET] New balance set to:', available);
         } else {
-          console.log('💰 [SOCKET] Balance update rejected:', {
-            available,
-            frozen,
-            isNumber: typeof available === 'number',
-            validation: validateBalanceUpdate(available, frozen || 0)
-          });
         }
         
         if (typeof frozen === 'number') {
@@ -227,7 +214,6 @@ export default function TradePage() {
             profit: profit,
             amount: amount
           };
-          console.log('📊 [SOCKET] Trade result updated (PRIORITY):', event.detail.tradeId);
           return newResults;
         } else {
           // Add new result
@@ -240,7 +226,6 @@ export default function TradePage() {
               amount: amount
             }
           ];
-          console.log('📊 [SOCKET] Trade result added (PRIORITY):', event.detail.tradeId);
           return newResults;
         }
       });
@@ -321,7 +306,6 @@ export default function TradePage() {
     };
 
     const handleTradeHistoryUpdated = (event: CustomEvent) => {
-      console.log('📝 [SOCKET-ONLY] Trade history updated event received:', event.detail);
       
       const { action, trade } = event.detail;
       
@@ -398,7 +382,6 @@ export default function TradePage() {
     };
 
     const handleBatchTradesCompleted = (event: CustomEvent) => {
-      console.log('🎉 [SOCKET-ONLY] Batch trades completed event received:', event.detail);
       
       const { trades, sessionId, totalTrades, totalWins, totalLosses } = event.detail;
       
@@ -416,7 +399,6 @@ export default function TradePage() {
               profit: trade.profit,
               status: 'completed'
             };
-            console.log('📊 [SOCKET-ONLY] Updated trade from settlement:', trade.tradeId, 'result:', trade.result);
           }
         });
         
@@ -452,7 +434,6 @@ export default function TradePage() {
   // ✅ RELOAD PROTECTION: Xử lý socket reconnection sau reload
   useEffect(() => {
     if (socket?.connected) {
-      console.log('🔌 [SOCKET] Reconnected after reload - sẽ nhận real-time updates');
       // Socket sẽ tự động nhận các events mới
     }
   }, [socket?.connected]);
@@ -487,19 +468,16 @@ export default function TradePage() {
         }
 
         // ✅ HYBRID: Load data cũ một lần khi vào trang, sau đó dùng socket events
-        console.log('📊 [HYBRID] Load data cũ một lần khi vào trang');
         
         // ✅ RELOAD PROTECTION: Đánh dấu đang load để tránh conflict
         const isReload = performance.navigation?.type === 1; // 1 = reload
         if (isReload) {
-          console.log('🔄 [RELOAD] Phát hiện reload trang - sẽ load data cũ trước');
         }
         
         // ✅ RELOAD PROTECTION: Chỉ load data nếu chưa có hoặc đã lỗi thời
         const shouldLoadData = !tradeHistory.length || (!balance && balance !== 0);
         
         if (shouldLoadData) {
-          console.log('📊 [HYBRID] Loading fresh data from API...');
           
           // ✅ Load trade history một lần khi vào trang
           const tradeHistoryResponse = await fetch('/api/trades/history', {
@@ -511,7 +489,6 @@ export default function TradePage() {
           if (tradeHistoryResponse.ok) {
             const data = await tradeHistoryResponse.json();
             setTradeHistory(data.trades || []);
-            console.log('📊 [HYBRID] Loaded trade history:', data.trades?.length || 0, 'trades');
           }
 
           // ✅ Load balance một lần khi vào trang
@@ -525,10 +502,8 @@ export default function TradePage() {
             const data = await balanceResponse.json();
             setBalance(data.balance.available);
             setFrozenBalance(data.balance.frozen);
-            console.log('💰 [HYBRID] Loaded balance:', data.balance.available);
           }
         } else {
-          console.log('📊 [HYBRID] Data already loaded, skipping API calls');
         }
         
         // ✅ Sau đó chỉ dùng socket events cho real-time updates

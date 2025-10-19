@@ -606,14 +606,24 @@ async function processSettlement(settlementData) {
           tradeCount: trades.length
         });
         
+        // ✅ VALIDATION: Đảm bảo balance data hợp lý
+        const available = Math.max(0, userDoc?.balance?.available ?? 0);
+        const frozen = Math.max(0, userDoc?.balance?.frozen ?? 0);
+        
+        // ✅ VALIDATION: Kiểm tra balance data trước khi gửi
+        if (frozen < 0) {
+          console.error(`❌ [SETTLEMENT] Frozen balance âm: ${frozen} - Không gửi socket event`);
+          return;
+        }
+        
         await sendSocketEvent(userId, 'balance:updated', {
           userId,
           sessionId: result.sessionId,
           tradeCount: trades.length,
           message: `Balance đã được cập nhật sau settlement (${trades.length} trades)`,
           balance: {
-            available: userDoc?.balance?.available ?? 0,
-            frozen: userDoc?.balance?.frozen ?? 0
+            available,
+            frozen
           }
         });
         
@@ -848,6 +858,12 @@ async function sendSocketEvent(userId, event, data) {
 
     const result = await response.json();
     console.log(`📡 [SOCKET] Sent ${event} to user ${userId}:`, result.success ? 'SUCCESS' : 'FAILED');
+    
+    // ✅ VALIDATION: Kiểm tra kết quả gửi event
+    if (!result.success) {
+      console.error(`❌ [SOCKET] Failed to send ${event} to user ${userId}`);
+    }
+    
     return result.success;
   } catch (error) {
     console.error(`❌ [SOCKET] Error sending ${event} to user ${userId}:`, error);
