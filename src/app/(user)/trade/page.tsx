@@ -545,7 +545,6 @@ export default function TradePage() {
     }
   }, [authLoading, user, router, toast]);
 
-  // ✅ HYBRID: Load data cũ một lần khi vào trang, sau đó dùng socket events
   // Trade history: Load một lần từ API → Real-time updates từ socket events
   // Balance: Load một lần từ API → Real-time updates từ socket events
   // Socket events:
@@ -727,11 +726,6 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`trade_window_opened_${data.sessionId}_${data.timestamp}`)) {
-        // console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
-        // console.log('📈 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        // console.log('📈 [FRONTEND-SCHEDULER] Trade window opened at:', data.timestamp);
-        // console.log('📈 [FRONTEND-SCHEDULER] ===== TRADE WINDOW OPENED =====');
-        
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`trade_window_opened_${data.sessionId}_${data.timestamp}`);
         
@@ -746,10 +740,6 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`trade_window_closed_${data.sessionId}_${data.timestamp}`)) {
-        // console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
-        // console.log('📉 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        // console.log('📉 [FRONTEND-SCHEDULER] Trade window closed at:', data.timestamp);
-        // console.log('📉 [FRONTEND-SCHEDULER] ===== TRADE WINDOW CLOSED =====');
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`trade_window_closed_${data.sessionId}_${data.timestamp}`);
@@ -769,12 +759,6 @@ export default function TradePage() {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
       if (!processedTradesRef.current.has(`settlement_completed_${data.sessionId}_${data.timestamp}`)) {
-        // console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
-        // console.log('✅ [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        // console.log('✅ [FRONTEND-SCHEDULER] Total wins:', data.totalWins);
-        // console.log('✅ [FRONTEND-SCHEDULER] Total losses:', data.totalLosses);
-        // console.log('✅ [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
-        // console.log('✅ [FRONTEND-SCHEDULER] ===== SETTLEMENT COMPLETED =====');
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`settlement_completed_${data.sessionId}_${data.timestamp}`);
@@ -789,11 +773,7 @@ export default function TradePage() {
     const handleSessionCompleted = (event: CustomEvent) => {
       const data = event.detail;
       // ✅ FIX: Chỉ log 1 lần để tránh spam
-      if (!processedTradesRef.current.has(`session_completed_${data.sessionId}_${data.timestamp}`)) {
-        // console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
-        // console.log('🏁 [FRONTEND-SCHEDULER] Session:', data.sessionId);
-        // console.log('🏁 [FRONTEND-SCHEDULER] Completed at:', data.timestamp);
-        // console.log('🏁 [FRONTEND-SCHEDULER] ===== SESSION COMPLETED =====');
+      if (!processedTradesRef.current.has(`session_completed_${data.sessionId}_${data.timestamp}`)) { 
         
         // Đánh dấu đã xử lý
         processedTradesRef.current.add(`session_completed_${data.sessionId}_${data.timestamp}`);

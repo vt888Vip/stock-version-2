@@ -272,6 +272,14 @@ const sendToUser = (userId, event, data) => {
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
     
+    // ✅ DEBUG: Log room info
+    console.log(`📡 [SOCKET] Sending ${event} to user ${userId}:`, {
+      userRoom,
+      roomSize,
+      event,
+      data: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
+    });
+    
     // ✅ Xử lý batch events từ worker
     if (data.batch && data.events && Array.isArray(data.events)) {
       console.log(`📦 [BATCH] Nhận batch ${event} cho user ${userId}: ${data.events.length} events`);
@@ -365,6 +373,16 @@ app.post('/emit', async (req, res) => {
       });
     }
 
+    // ✅ DEBUG: Log chi tiết request
+    console.log(`📡 [SOCKET] Received emit request:`, {
+      userId,
+      event,
+      data: {
+        ...data,
+        balance: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
+      }
+    });
+    
     // Gửi event đến user
     const success = await sendToUser(userId, event, data);
     
