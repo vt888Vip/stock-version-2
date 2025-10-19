@@ -321,9 +321,11 @@ const sendToUser = (userId, event, data) => {
       const profit = data.profit || data.totalProfit || 0;
       const tradeCount = data.tradeCount || 1;
       const result = data.result || 'unknown';
+      const available = data.balance?.available || 0;
+      const frozen = data.balance?.frozen || 0;
       const profitText = profit >= 0 ? `+${profit.toLocaleString()}` : `${profit.toLocaleString()}`;
       const statusText = result === 'win' ? 'THẮNG' : result === 'lose' ? 'THUA' : 'UNKNOWN';
-      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profitText} VND (${statusText}, ${tradeCount} giao dịch)`);
+      console.log(`💰 [SỐ DƯ] Cập nhật số dư cho user ${userId}: ${profitText} VND (${statusText}, ${tradeCount} giao dịch) - Balance: ${available.toLocaleString()}/${frozen.toLocaleString()}`);
     } else if (event === 'trade:placed') {
       const amount = data.amount || data.amount || 0;
       console.log(`📈 [TRADE] Đặt lệnh thành công cho user ${userId}: ${amount.toLocaleString()} VND (${data.direction})`);
