@@ -502,7 +502,12 @@ export default function TradePage() {
           console.log('📊 [HYBRID] Loading fresh data from API...');
           
           // ✅ Load trade history một lần khi vào trang
-          const tradeHistoryResponse = await fetch('/api/trades/history');
+          const tradeHistoryResponse = await fetch('/api/trades/history', {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Content-Type': 'application/json'
+            }
+          });
           if (tradeHistoryResponse.ok) {
             const data = await tradeHistoryResponse.json();
             setTradeHistory(data.trades || []);
@@ -510,7 +515,12 @@ export default function TradePage() {
           }
 
           // ✅ Load balance một lần khi vào trang
-          const balanceResponse = await fetch('/api/user/balance');
+          const balanceResponse = await fetch('/api/user/balance', {
+            headers: {
+              'Authorization': `Bearer ${localStorage.getItem('token')}`,
+              'Content-Type': 'application/json'
+            }
+          });
           if (balanceResponse.ok) {
             const data = await balanceResponse.json();
             setBalance(data.balance.available);
