@@ -272,13 +272,15 @@ const sendToUser = (userId, event, data) => {
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
     
-    // ✅ DEBUG: Log room info
-    console.log(`📡 [SOCKET] Sending ${event} to user ${userId}:`, {
-      userRoom,
-      roomSize,
-      event,
-      data: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
-    });
+    // ✅ DEBUG: Log room info (bỏ qua timer events)
+    if (event !== 'session:timer:update' && event !== 'session:settlement:triggered') {
+      console.log(`📡 [SOCKET] Sending ${event} to user ${userId}:`, {
+        userRoom,
+        roomSize,
+        event,
+        data: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
+      });
+    }
     
     // ✅ Xử lý batch events từ worker
     if (data.batch && data.events && Array.isArray(data.events)) {
@@ -327,8 +329,6 @@ const sendToUser = (userId, event, data) => {
       console.log(`📈 [TRADE] Đặt lệnh thành công cho user ${userId}: ${amount.toLocaleString()} VND (${data.direction})`);
     } else if (event === 'trades:batch:completed') {
       console.log(`✅ [BATCH] Hoàn tất xử lý batch cho user ${userId}: ${data.trades?.length || 0} giao dịch`);
-    } else if (event === 'session:settlement:triggered') {
-      console.log(`🔄 [SETTLEMENT] Bắt đầu settlement cho session ${data.sessionId}`);
     } else if (event === 'session:settlement:completed') {
       console.log(`✅ [SETTLEMENT] Hoàn tất settlement cho session ${data.sessionId} - Kết quả: ${data.result}`);
     } else if (event === 'trade:completed') {
@@ -373,15 +373,17 @@ app.post('/emit', async (req, res) => {
       });
     }
 
-    // ✅ DEBUG: Log chi tiết request
-    console.log(`📡 [SOCKET] Received emit request:`, {
-      userId,
-      event,
-      data: {
-        ...data,
-        balance: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
-      }
-    });
+    // ✅ DEBUG: Log chi tiết request (bỏ qua timer events)
+    if (event !== 'session:timer:update' && event !== 'session:settlement:triggered') {
+      console.log(`📡 [SOCKET] Received emit request:`, {
+        userId,
+        event,
+        data: {
+          ...data,
+          balance: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
+        }
+      });
+    }
     
     // Gửi event đến user
     const success = await sendToUser(userId, event, data);
