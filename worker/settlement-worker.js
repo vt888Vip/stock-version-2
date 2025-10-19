@@ -396,63 +396,8 @@ async function processSettlement(settlementData) {
 
         console.log(`🎯 [SETTLEMENT] Trade ${trade.tradeId}: ${direction} vs ${sessionResult} = ${isWin ? 'WIN' : 'LOSE'} (${profit} VND)`);
 
-        // Cập nhật balance user
-        if (isWin) {
-          console.log(`💰 [SETTLEMENT] Cập nhật balance cho user ${userId}:`, {
-            frozen: -amount,
-            available: amount + profit,
-            total: amount + profit
-          });
-          
-          // ✅ DEBUG: Lấy balance trước khi update
-          const beforeUpdate = await mongoose.connection.db.collection('users').findOne(
-            { _id: new mongoose.Types.ObjectId(userId) },
-            { projection: { balance: 1 } }
-          );
-          
-          console.log(`💰 [SETTLEMENT] Balance trước update:`, {
-            available: beforeUpdate?.balance?.available ?? 0,
-            frozen: beforeUpdate?.balance?.frozen ?? 0
-          });
-          
-          const updateResult = await mongoose.connection.db.collection('users').updateOne(
-            { _id: new mongoose.Types.ObjectId(userId) },
-            {
-              $inc: { 
-                'balance.frozen': -amount, 
-                'balance.available': amount + profit 
-              },
-              $set: { updatedAt: new Date() }
-            },
-            { session }
-          );
-          
-          console.log(`💰 [SETTLEMENT] Balance update result:`, {
-            matchedCount: updateResult.matchedCount,
-            modifiedCount: updateResult.modifiedCount,
-            acknowledged: updateResult.acknowledged
-          });
-          
-          // ✅ DEBUG: Lấy balance sau khi update
-          const afterUpdate = await mongoose.connection.db.collection('users').findOne(
-            { _id: new mongoose.Types.ObjectId(userId) },
-            { projection: { balance: 1 } }
-          );
-          
-          console.log(`💰 [SETTLEMENT] Balance sau update:`, {
-            available: afterUpdate?.balance?.available ?? 0,
-            frozen: afterUpdate?.balance?.frozen ?? 0
-          });
-        } else {
-          await mongoose.connection.db.collection('users').updateOne(
-            { _id: new mongoose.Types.ObjectId(userId) },
-            {
-              $inc: { 'balance.frozen': -amount },
-              $set: { updatedAt: new Date() }
-            },
-            { session }
-          );
-        }
+        // ✅ CHỈ CẬP NHẬT TRADE RECORD TRONG TRANSACTION
+        // Balance update sẽ được thực hiện SAU KHI transaction commit
 
         // Cập nhật trade record
         await mongoose.connection.db.collection('trades').updateOne(
@@ -620,6 +565,81 @@ async function processSettlement(settlementData) {
         totalLossAmount
       };
     });
+
+    // ✅ CẬP NHẬT BALANCE SAU KHI TRANSACTION COMMIT
+    if (result.success) {
+      console.log(`💰 [SETTLEMENT] Cập nhật balance sau khi transaction commit...`);
+      
+      // Lấy lại pending trades để cập nhật balance
+      const completedTrades = await mongoose.connection.db.collection('trades').find({
+        sessionId: result.sessionId,
+        status: 'completed'
+      }).toArray();
+      
+      for (const trade of completedTrades) {
+        const userId = trade.userId.toString();
+        const amount = trade.amount;
+        const direction = trade.direction || (trade.type === 'buy' ? 'UP' : 'DOWN');
+        const userPrediction = direction;
+        const isWin = userPrediction === result.result;
+        const profit = isWin ? Math.floor(amount * 0.9) : -amount;
+        
+        if (isWin) {
+          console.log(`💰 [SETTLEMENT] Cập nhật balance cho user ${userId}:`, {
+            frozen: -amount,
+            available: amount + profit,
+            total: amount + profit
+          });
+          
+          // ✅ DEBUG: Lấy balance trước khi update
+          const beforeUpdate = await mongoose.connection.db.collection('users').findOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            { projection: { balance: 1 } }
+          );
+          
+          console.log(`💰 [SETTLEMENT] Balance trước update:`, {
+            available: beforeUpdate?.balance?.available ?? 0,
+            frozen: beforeUpdate?.balance?.frozen ?? 0
+          });
+          
+          const updateResult = await mongoose.connection.db.collection('users').updateOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            {
+              $inc: { 
+                'balance.frozen': -amount, 
+                'balance.available': amount + profit 
+              },
+              $set: { updatedAt: new Date() }
+            }
+          );
+          
+          console.log(`💰 [SETTLEMENT] Balance update result:`, {
+            matchedCount: updateResult.matchedCount,
+            modifiedCount: updateResult.modifiedCount,
+            acknowledged: updateResult.acknowledged
+          });
+          
+          // ✅ DEBUG: Lấy balance sau khi update
+          const afterUpdate = await mongoose.connection.db.collection('users').findOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            { projection: { balance: 1 } }
+          );
+          
+          console.log(`💰 [SETTLEMENT] Balance sau update:`, {
+            available: afterUpdate?.balance?.available ?? 0,
+            frozen: afterUpdate?.balance?.frozen ?? 0
+          });
+        } else {
+          await mongoose.connection.db.collection('users').updateOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            {
+              $inc: { 'balance.frozen': -amount },
+              $set: { updatedAt: new Date() }
+            }
+          );
+        }
+      }
+    }
 
     // Gửi socket events SAU KHI transaction commit thành công
     if (result.success && result.needsSocketEvents) {
