@@ -398,7 +398,24 @@ async function processSettlement(settlementData) {
 
         // Cập nhật balance user
         if (isWin) {
-          await mongoose.connection.db.collection('users').updateOne(
+          console.log(`💰 [SETTLEMENT] Cập nhật balance cho user ${userId}:`, {
+            frozen: -amount,
+            available: amount + profit,
+            total: amount + profit
+          });
+          
+          // ✅ DEBUG: Lấy balance trước khi update
+          const beforeUpdate = await mongoose.connection.db.collection('users').findOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            { projection: { balance: 1 } }
+          );
+          
+          console.log(`💰 [SETTLEMENT] Balance trước update:`, {
+            available: beforeUpdate?.balance?.available ?? 0,
+            frozen: beforeUpdate?.balance?.frozen ?? 0
+          });
+          
+          const updateResult = await mongoose.connection.db.collection('users').updateOne(
             { _id: new mongoose.Types.ObjectId(userId) },
             {
               $inc: { 
@@ -409,6 +426,23 @@ async function processSettlement(settlementData) {
             },
             { session }
           );
+          
+          console.log(`💰 [SETTLEMENT] Balance update result:`, {
+            matchedCount: updateResult.matchedCount,
+            modifiedCount: updateResult.modifiedCount,
+            acknowledged: updateResult.acknowledged
+          });
+          
+          // ✅ DEBUG: Lấy balance sau khi update
+          const afterUpdate = await mongoose.connection.db.collection('users').findOne(
+            { _id: new mongoose.Types.ObjectId(userId) },
+            { projection: { balance: 1 } }
+          );
+          
+          console.log(`💰 [SETTLEMENT] Balance sau update:`, {
+            available: afterUpdate?.balance?.available ?? 0,
+            frozen: afterUpdate?.balance?.frozen ?? 0
+          });
         } else {
           await mongoose.connection.db.collection('users').updateOne(
             { _id: new mongoose.Types.ObjectId(userId) },
@@ -518,6 +552,14 @@ async function processSettlement(settlementData) {
           available: userDoc?.balance?.available ?? 0,
           frozen: userDoc?.balance?.frozen ?? 0,
           tradeCount: trades.length
+        });
+        
+        // ✅ DEBUG: Kiểm tra balance sau settlement
+        console.log(`💰 [SETTLEMENT] Balance sau settlement:`, {
+          available: userDoc?.balance?.available ?? 0,
+          frozen: userDoc?.balance?.frozen ?? 0,
+          expectedAvailable: 10598580 + 5000000 + 4500000, // 10598580 + amount + profit
+          expectedFrozen: 0
         });
         
         await sendSocketEvent(userId, 'balance:updated', {
