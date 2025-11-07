@@ -11,8 +11,12 @@ const allowedOrigins = [
   'https://www.hcmlondonvn.com',
   'http://hcmlondonvn.com',
   'http://www.hcmlondonvn.com',
-  'https://176.97.65.153',
-  'http://176.97.65.153',
+  'https://38.180.107.104',
+  'http://38.180.107.104',
+  'https://38.180.107.104:3000',
+  'http://38.180.107.104:3000',
+  'https://38.180.107.104:3001',
+  'http://38.180.107.104:3001',
 ];
 
 // Các header bảo mật

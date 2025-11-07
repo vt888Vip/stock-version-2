@@ -29,10 +29,12 @@ const io = new Server(server, {
       "https://www.hcmlondonvn.com",
       "http://hcmlondonvn.com",
       "http://www.hcmlondonvn.com",
-      "https://176.97.65.153",
-      "http://176.97.65.153",
-      "https://176.97.65.153:3000",
-      "http://176.97.65.153:3000"
+      "https://38.180.107.104",
+      "http://38.180.107.104",
+      "https://38.180.107.104:3000",
+      "http://38.180.107.104:3000",
+      "https://38.180.107.104:3001",
+      "http://38.180.107.104:3001"
     ],
     methods: ["GET", "POST"],
     credentials: true,
@@ -416,7 +418,8 @@ server.listen(PORT, () => {
   console.log(`   - http://localhost:3000`);
   console.log(`   - https://hcmlondonvn.com`);
   console.log(`   - https://www.hcmlondonvn.com`);
-  console.log(`   - https://176.97.65.153`);
+  console.log(`   - https://38.180.107.104`);
+  console.log(`   - http://38.180.107.104`);
 });
 
 // Export functions for use in other files
