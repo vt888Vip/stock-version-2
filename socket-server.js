@@ -274,7 +274,7 @@ const sendToUser = (userId, event, data) => {
     const userRoom = `user_${userId}`;
     const roomSize = io.sockets.adapter.rooms.get(userRoom)?.size || 0;
     
-    // ✅ DEBUG: Log room info (bỏ qua timer events)
+    // ✅ DEBUG: Log room info (bỏ qua timer events để giảm log noise)
     if (event !== 'session:timer:update' && event !== 'session:settlement:triggered') {
       console.log(`📡 [SOCKET] Sending ${event} to user ${userId}:`, {
         userRoom,
@@ -282,6 +282,11 @@ const sendToUser = (userId, event, data) => {
         event,
         data: data.balance ? { available: data.balance.available, frozen: data.balance.frozen } : 'N/A'
       });
+    } else {
+      // Log timer events nhưng ngắn gọn hơn
+      if (event === 'session:timer:update') {
+        console.log(`⏰ [TIMER] Update for session ${data.sessionId}: ${data.timeLeft}s left`);
+      }
     }
     
     // ✅ Xử lý batch events từ worker

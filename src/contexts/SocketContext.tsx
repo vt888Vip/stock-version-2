@@ -42,10 +42,24 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     // console.log('🔑 Token:', token ? 'Present' : 'Not found');
     // console.log('👤 User:', user);
 
-    // Sử dụng tên miền hoặc IP của VPS thay vì localhost
-    const socketUrl = window.location.hostname === 'localhost' 
-      ? 'http://localhost:3001' 
-      : window.location.origin; // sử dụng domain (443)
+    // Sử dụng biến môi trường hoặc tự động detect
+    let socketUrl: string;
+    
+    // Ưu tiên dùng biến môi trường
+    if (process.env.NEXT_PUBLIC_SOCKET_URL) {
+      socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+      console.log('🔗 [SOCKET] Using NEXT_PUBLIC_SOCKET_URL:', socketUrl);
+    } else if (window.location.hostname === 'localhost') {
+      // Localhost: dùng port 3001
+      socketUrl = 'http://localhost:3001';
+      console.log('🔗 [SOCKET] Using localhost:', socketUrl);
+    } else {
+      // Production: dùng cùng hostname nhưng port 3001
+      const protocol = window.location.protocol;
+      const hostname = window.location.hostname;
+      socketUrl = `${protocol}//${hostname}:3001`;
+      console.log('🔗 [SOCKET] Auto-detected URL:', socketUrl);
+    }
     
     const authPayloadToken = token || (user?.id ? `user_${user.id}_${Date.now()}` : 'test-token');
 
@@ -92,11 +106,14 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     });
 
     newSocket.on('connect', () => {
+      console.log('✅ [SOCKET] Connected to:', socketUrl);
       setIsConnected(true);
     });
 
     // ✅ Thêm monitoring cho VPS
-    newSocket.on('connect_error', () => {
+    newSocket.on('connect_error', (error) => {
+      console.error('❌ [SOCKET] Connection error:', error);
+      console.error('❌ [SOCKET] Attempted URL:', socketUrl);
       setIsConnected(false);
     });
 
@@ -224,6 +241,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
     // ✅ TIMER UPDATES: Lắng nghe timer updates từ Scheduler
     newSocket.on('session:timer:update', (data) => {
+      console.log('⏰ [SOCKET] Received timer update:', data);
       const event = new CustomEvent('session:timer:update', {
         detail: data
       });
