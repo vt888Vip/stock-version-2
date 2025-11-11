@@ -1,21 +1,22 @@
 const getApiBaseUrl = () => {
   if (typeof window === 'undefined') {
-    // Phía server - sử dụng tên miền mới
-    return process.env.NODE_ENV === 'production' 
-      ? 'https://hcmlondonvn.com:3000'
-      : 'http://localhost:3000';
+    // Phía server - sử dụng biến môi trường hoặc domain mặc định
+    return process.env.NEXT_PUBLIC_APP_URL || 
+           (process.env.NODE_ENV === 'production' 
+             ? 'https://newlondonfinancial.com'
+             : 'http://localhost:3000');
   }
 
   // Phía client - tự động detect protocol và domain
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
   
-  if (hostname === 'localhost') {
+  if (hostname === 'localhost' || hostname === '127.0.0.1') {
     return 'http://localhost:3000';
   }
   
-  // Sử dụng tên miền mới
-  return `${protocol}//hcmlondonvn.com:3000`;
+  // Sử dụng domain hiện tại (tự động detect)
+  return `${protocol}//${hostname}${window.location.port ? ':' + window.location.port : ''}`;
 };
 
 export const API_CONFIG = {

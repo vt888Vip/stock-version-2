@@ -9,7 +9,7 @@ process.env.NODE_ENV = 'production';
 process.env.SOCKET_PORT = '3001';
 
 console.log('🚀 Starting Socket.IO server in production mode...');
-console.log('📡 Domain: hcmlondonvn.com');
+console.log('📡 Domain: newlondonfinancial.com');
 console.log('🔒 Protocol: HTTPS');
 console.log('⚡ Port: 3001');
 

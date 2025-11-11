@@ -25,10 +25,10 @@ const io = new Server(server, {
   cors: {
     origin: [
       "http://localhost:3000", 
-      "https://hcmlondonvn.com",
-      "https://www.hcmlondonvn.com",
-      "http://hcmlondonvn.com",
-      "http://www.hcmlondonvn.com",
+      "https://newlondonfinancial.com",
+      "https://www.newlondonfinancial.com",
+      "http://newlondonfinancial.com",
+      "http://www.newlondonfinancial.com",
       "https://38.180.107.104",
       "http://38.180.107.104",
       "https://38.180.107.104:3000",
@@ -421,8 +421,8 @@ server.listen(PORT, () => {
   console.log(`📡 Protocol: ${protocol.toUpperCase()}`);
   console.log(`📡 CORS enabled for:`);
   console.log(`   - http://localhost:3000`);
-  console.log(`   - https://hcmlondonvn.com`);
-  console.log(`   - https://www.hcmlondonvn.com`);
+  console.log(`   - https://newlondonfinancial.com`);
+  console.log(`   - https://www.newlondonfinancial.com`);
   console.log(`   - https://38.180.107.104`);
   console.log(`   - http://38.180.107.104`);
 });
