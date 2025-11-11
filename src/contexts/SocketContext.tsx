@@ -54,11 +54,12 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       socketUrl = 'http://localhost:3001';
       console.log('🔗 [SOCKET] Using localhost:', socketUrl);
     } else {
-      // Production: dùng cùng hostname nhưng port 3001
+      // Production: dùng cùng domain (qua Nginx proxy, không cần port)
+      // Nginx sẽ proxy /socket.io/ → http://localhost:3001
       const protocol = window.location.protocol;
       const hostname = window.location.hostname;
-      socketUrl = `${protocol}//${hostname}:3001`;
-      console.log('🔗 [SOCKET] Auto-detected URL:', socketUrl);
+      socketUrl = `${protocol}//${hostname}`;
+      console.log('🔗 [SOCKET] Auto-detected URL (via Nginx):', socketUrl);
     }
     
     const authPayloadToken = token || (user?.id ? `user_${user.id}_${Date.now()}` : 'test-token');
