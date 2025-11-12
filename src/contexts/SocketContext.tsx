@@ -45,21 +45,30 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     // Sử dụng biến môi trường hoặc tự động detect
     let socketUrl: string;
     
-    // Ưu tiên dùng biến môi trường
-    if (process.env.NEXT_PUBLIC_SOCKET_URL) {
-      socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
-      console.log('🔗 [SOCKET] Using NEXT_PUBLIC_SOCKET_URL:', socketUrl);
-    } else if (window.location.hostname === 'localhost') {
+    // Kiểm tra xem đang chạy trên localhost hay production
+    const isLocalhost = typeof window !== 'undefined' && 
+      (window.location.hostname === 'localhost' || 
+       window.location.hostname === '127.0.0.1' ||
+       window.location.hostname.startsWith('192.168.'));
+    
+    if (isLocalhost) {
       // Localhost: dùng port 3001
       socketUrl = 'http://localhost:3001';
       console.log('🔗 [SOCKET] Using localhost:', socketUrl);
     } else {
-      // Production: dùng cùng domain (qua Nginx proxy, không cần port)
-      // Nginx sẽ proxy /socket.io/ → http://localhost:3001
-      const protocol = window.location.protocol;
-      const hostname = window.location.hostname;
-      socketUrl = `${protocol}//${hostname}`;
-      console.log('🔗 [SOCKET] Auto-detected URL (via Nginx):', socketUrl);
+      // Production: Ưu tiên biến môi trường, nếu không có thì auto-detect domain
+      if (process.env.NEXT_PUBLIC_SOCKET_URL && 
+          !process.env.NEXT_PUBLIC_SOCKET_URL.includes('localhost')) {
+        socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
+        console.log('🔗 [SOCKET] Using NEXT_PUBLIC_SOCKET_URL:', socketUrl);
+      } else {
+        // Auto-detect: dùng cùng domain (qua Nginx proxy, không cần port)
+        // Nginx sẽ proxy /socket.io/ → http://localhost:3001
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        socketUrl = `${protocol}//${hostname}`;
+        console.log('🔗 [SOCKET] Auto-detected URL (via Nginx):', socketUrl);
+      }
     }
     
     const authPayloadToken = token || (user?.id ? `user_${user.id}_${Date.now()}` : 'test-token');
