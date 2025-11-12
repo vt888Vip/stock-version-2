@@ -56,19 +56,13 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       socketUrl = 'http://localhost:3001';
       console.log('🔗 [SOCKET] Using localhost:', socketUrl);
     } else {
-      // Production: Ưu tiên biến môi trường, nếu không có thì auto-detect domain
-      if (process.env.NEXT_PUBLIC_SOCKET_URL && 
-          !process.env.NEXT_PUBLIC_SOCKET_URL.includes('localhost')) {
-        socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL;
-        console.log('🔗 [SOCKET] Using NEXT_PUBLIC_SOCKET_URL:', socketUrl);
-      } else {
-        // Auto-detect: dùng cùng domain (qua Nginx proxy, không cần port)
-        // Nginx sẽ proxy /socket.io/ → http://localhost:3001
-        const protocol = window.location.protocol;
-        const hostname = window.location.hostname;
-        socketUrl = `${protocol}//${hostname}`;
-        console.log('🔗 [SOCKET] Auto-detected URL (via Nginx):', socketUrl);
-      }
+      // Production: Luôn auto-detect domain (bỏ qua NEXT_PUBLIC_SOCKET_URL nếu có localhost)
+      // Nginx sẽ proxy /socket.io/ → http://localhost:3001 (nội bộ, an toàn)
+      const protocol = window.location.protocol;
+      const hostname = window.location.hostname;
+      socketUrl = `${protocol}//${hostname}`;
+      console.log('🔗 [SOCKET] Auto-detected URL (via Nginx):', socketUrl);
+      console.log('🔗 [SOCKET] Nginx will proxy to localhost:3001 internally');
     }
     
     const authPayloadToken = token || (user?.id ? `user_${user.id}_${Date.now()}` : 'test-token');
