@@ -17,14 +17,24 @@ import { createClient } from 'redis';
   }
 })();
 
-// Configuration - RabbitMQ Local Open Source
-const RABBITMQ_URL = process.env.RABBITMQ_URL || 'amqp://trading_user:trading_password@localhost:5672';
+// Configuration - Hardcoded values
+// RabbitMQ Configuration
+const RABBITMQ_URL = 'amqp://trading_user:trading_password@localhost:5672';
+const RABBITMQ_HOST = 'localhost';
+const RABBITMQ_PORT = 5672;
+const RABBITMQ_USERNAME = 'trading_user';
+const RABBITMQ_PASSWORD = 'trading_password';
+const RABBITMQ_VHOST = '/';
+
+// MongoDB Configuration
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://vincent:vincent79@cluster0.btgvgm.mongodb.net/finacial_platform';
-const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
-const REDIS_HOST = process.env.REDIS_HOST || 'localhost';
-const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379');
-const REDIS_DB = parseInt(process.env.REDIS_DB || '0');
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD || undefined;
+
+// Redis Configuration
+const REDIS_URL = 'redis://:ThanhVicent79@localhost:6379';
+const REDIS_HOST = 'localhost';
+const REDIS_PORT = 6379;
+const REDIS_DB = 0;
+const REDIS_PASSWORD = 'ThanhVicent79';
 const TRADE_PROCESSING_QUEUE = 'trade-processing';
 const SOCKET_SERVER_URL = process.env.SOCKET_SERVER_URL || (process.env.NODE_ENV === 'production' 
   ? 'http://127.0.0.1:3001' 
@@ -91,11 +101,11 @@ async function connectRedis() {
       password: REDIS_PASSWORD ? '*** set ***' : '(none)'
     });
     
+    // Tạo Redis client - dùng URL vì đã có password trong URL
+    // Không set password riêng để tránh conflict
     redisClient = createClient({
       url: REDIS_URL,
       socket: {
-        host: REDIS_HOST,
-        port: REDIS_PORT,
         reconnectStrategy: (retries) => {
           const delay = Math.min(1000 * Math.pow(2, retries), 15000);
           return delay;
@@ -103,8 +113,6 @@ async function connectRedis() {
         connectTimeout: 10000,
         keepAlive: 1,
       },
-      password: REDIS_PASSWORD,
-      database: REDIS_DB,
     });
 
     redisClient.on('error', (err) => {
