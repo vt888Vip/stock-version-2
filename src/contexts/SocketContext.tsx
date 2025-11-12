@@ -42,27 +42,27 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
     // console.log('🔑 Token:', token ? 'Present' : 'Not found');
     // console.log('👤 User:', user);
 
-    // Sử dụng biến môi trường hoặc tự động detect
+    // Sử dụng IP của VPS thay vì localhost
+    // Ưu tiên: Domain qua Nginx → IP trực tiếp → Localhost
     let socketUrl: string;
     
-    // Kiểm tra xem đang chạy trên localhost hay production
-    const isLocalhost = typeof window !== 'undefined' && 
-      (window.location.hostname === 'localhost' || 
-       window.location.hostname === '127.0.0.1' ||
-       window.location.hostname.startsWith('192.168.'));
-    
-    if (isLocalhost) {
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
       // Localhost: dùng port 3001
       socketUrl = 'http://localhost:3001';
       console.log('🔗 [SOCKET] Using localhost:', socketUrl);
     } else {
-      // Production: Luôn auto-detect domain (bỏ qua NEXT_PUBLIC_SOCKET_URL nếu có localhost)
-      // Nginx sẽ proxy /socket.io/ → http://localhost:3001 (nội bộ, an toàn)
-      const protocol = window.location.protocol;
-      const hostname = window.location.hostname;
-      socketUrl = `${protocol}//${hostname}`;
-      console.log('🔗 [SOCKET] Auto-detected URL (via Nginx):', socketUrl);
-      console.log('🔗 [SOCKET] Nginx will proxy to localhost:3001 internally');
+      // Production: Ưu tiên dùng domain qua Nginx, fallback về IP trực tiếp
+      // Cách 1: Dùng domain (qua Nginx proxy - khuyến nghị)
+      if (window.location.hostname.includes('.com') || window.location.hostname.includes('.net')) {
+        const protocol = window.location.protocol;
+        const hostname = window.location.hostname;
+        socketUrl = `${protocol}//${hostname}`;
+        console.log('🔗 [SOCKET] Using domain (via Nginx):', socketUrl);
+      } else {
+        // Cách 2: Dùng IP trực tiếp (nếu không có domain hoặc Nginx chưa setup)
+        socketUrl = 'http://38.180.107.104:3001';
+        console.log('🔗 [SOCKET] Using VPS IP directly:', socketUrl);
+      }
     }
     
     const authPayloadToken = token || (user?.id ? `user_${user.id}_${Date.now()}` : 'test-token');
@@ -73,7 +73,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
         token: authPayloadToken
       },
       transports: ['websocket', 'polling'], // ✅ Fallback cho VPS
-      timeout: 8000, // ✅ Tăng timeout cho VPS
+      timeout: 10000, // ✅ Timeout 10s
       forceNew: true,
       // ✅ Tối ưu reconnection cho VPS
       upgrade: true,
@@ -119,6 +119,23 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
       console.error('❌ [SOCKET] Connection error:', error);
       console.error('❌ [SOCKET] Attempted URL:', socketUrl);
       setIsConnected(false);
+    });
+    
+    newSocket.on('reconnect', (attemptNumber) => {
+      console.log(`🔄 [SOCKET] Reconnected after ${attemptNumber} attempts`);
+      setIsConnected(true);
+    });
+
+    newSocket.on('reconnect_attempt', (attemptNumber) => {
+      console.log(`🔄 [SOCKET] Reconnection attempt ${attemptNumber}`);
+    });
+
+    newSocket.on('reconnect_error', (error) => {
+      console.error('❌ [SOCKET] Reconnection error:', error);
+    });
+
+    newSocket.on('reconnect_failed', () => {
+      console.error('❌ [SOCKET] Reconnection failed - giving up');
     });
 
     newSocket.on('disconnect', () => {
@@ -245,7 +262,7 @@ export const SocketProvider: React.FC<SocketProviderProps> = ({ children }) => {
 
     // ✅ TIMER UPDATES: Lắng nghe timer updates từ Scheduler
     newSocket.on('session:timer:update', (data) => {
-      console.log('⏰ [SOCKET] Received timer update:', data);
+      // Log tắt để giảm noise trong console
       const event = new CustomEvent('session:timer:update', {
         detail: data
       });
