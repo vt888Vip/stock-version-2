@@ -621,16 +621,10 @@ export class TradingScheduler {
       };
 
       // Send to socket server
-      // Tự động detect socket URL dựa trên môi trường
-      let socketServerUrl: string;
-      if (process.env.SOCKET_SERVER_URL) {
-        socketServerUrl = process.env.SOCKET_SERVER_URL;
-      } else if (process.env.NODE_ENV === 'production') {
-        // Production: dùng domain qua Nginx (HTTPS)
-        socketServerUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://newlondonfinancial.com';
-      } else {
-        socketServerUrl = 'http://localhost:3001';
-      }
+      // Scheduler chạy trên server-side, nên luôn dùng localhost để gọi trực tiếp socket server
+      // Client-side sẽ tự động dùng HTTPS domain qua SocketContext
+      // Hardcode để đảm bảo hoạt động đúng với SSL
+      const socketServerUrl = 'http://localhost:3001';
       
       fetch(`${socketServerUrl}/emit`, {
         method: 'POST',
