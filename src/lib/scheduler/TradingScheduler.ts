@@ -621,8 +621,18 @@ export class TradingScheduler {
       };
 
       // Send to socket server
+      // Tự động detect socket URL dựa trên môi trường
+      let socketServerUrl: string;
+      if (process.env.SOCKET_SERVER_URL) {
+        socketServerUrl = process.env.SOCKET_SERVER_URL;
+      } else if (process.env.NODE_ENV === 'production') {
+        // Production: dùng domain qua Nginx (HTTPS)
+        socketServerUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://newlondonfinancial.com';
+      } else {
+        socketServerUrl = 'http://localhost:3001';
+      }
       
-      fetch(`${process.env.SOCKET_SERVER_URL || (process.env.NODE_ENV === 'production' ? 'http://127.0.0.1:3001' : 'http://localhost:3001')}/emit`, {
+      fetch(`${socketServerUrl}/emit`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
